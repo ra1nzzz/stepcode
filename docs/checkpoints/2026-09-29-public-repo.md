@@ -1,7 +1,7 @@
 # CHECKPOINT — 建立公开仓库
 
 - 日期：2026-09-29
-- 决定：PASS（仅限建仓。推送结果在核对后写入）
+- 决定：PASS
 
 ## 已完成
 
@@ -10,6 +10,8 @@
 - 核对 `visibility=PUBLIC`，`isPrivate=false`
 - 仓库说明写明运行时核是 Step-Code，不是 ISO 10303 的 `stepcode/stepcode`
 - 根目录 README 不把 STEPcode 写成 Agent CLI
+- 首个提交 `f27d695a64d55939507227fff82b6f95c1ae5192` 已推送到 `origin/main`
+- 推送后 `gh api repos/ra1nzzz/stepcode/commits/main` 返回同一提交。默认分支是 `main`
 
 ## 未做
 
