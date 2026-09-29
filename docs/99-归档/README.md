@@ -16,7 +16,7 @@ updated: 2026-09-29
 | `docs/glossary/terms.md` | [术语](../00-项目/术语.md) | absorbed | 术语 |
 | `docs/architecture/runtime-boundary.md` | [运行时边界](../10-架构/运行时边界.md) | absorbed | 运行时边界 |
 | `docs/product/PRD.md` | [运行时替换](../20-需求/运行时替换.md) | absorbed | 需求 |
-| `docs/specs/runtime-replacement.md` | [替换契约](../30-开发/替换契约.md) 与 [不变量](../40-质量/不变量.md) | absorbed | 合同与质量门禁 |
+| `docs/specs/runtime-replacement.md` | [SPEC](../30-开发/替换契约.md) | absorbed | 合同与不变量全文。质量页只是指针 |
 | `docs/specs/PLAN.md` | [计划](../80-路线图/计划.md) | absorbed | 路线图 |
 | `docs/adr/0001-adopt-yt-anse.md` | [ADR 0001](../70-决策/0001-采用-yt-anse.md) | absorbed | ADR 0001 |
 | `docs/adr/0002-runtime-source-conflict.md` | [ADR 0002](../70-决策/0002-排除-stepcode.md) | absorbed | ADR 0002 |

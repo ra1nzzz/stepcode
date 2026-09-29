@@ -36,7 +36,7 @@
 2. 与任务相关的准则文档：`guidelines/yt-agent-native-engineering/docs/`
 3. 本仓库知识库唯一入口：`docs/README.md`
 4. Git 状态，以及相关代码、测试、入口
-5. 适用的 SPEC / ADR / CHECKPOINT
+5. 适用的 SPEC / ADR / CHECKPOINT：`docs/30-开发/替换契约.md`、`docs/70-决策/README.md`、`docs/00-项目/检查点.md`
 
 需要编排、知识治理或评审时，读取并执行：
 
