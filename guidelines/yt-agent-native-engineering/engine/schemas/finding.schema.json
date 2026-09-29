@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "YT-ANSE Review Finding",
+  "type": "object",
+  "required": ["id", "scope", "claim", "evidence", "severity", "priority"],
+  "properties": {
+    "id": {"type": "string"},
+    "scope": {"enum": ["line", "file", "module", "system"]},
+    "path": {"type": "string"},
+    "start_line": {"type": "integer", "minimum": 1},
+    "end_line": {"type": "integer", "minimum": 1},
+    "claim": {"type": "string"},
+    "evidence": {"type": "string"},
+    "severity": {"type": "string"},
+    "priority": {"enum": ["P0", "P1", "P2"]},
+    "status": {"enum": ["proposed", "fact_checked", "confirmed", "fixed", "verified", "rejected", "accepted_risk"]}
+  }
+}

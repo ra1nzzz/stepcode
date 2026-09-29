@@ -1,0 +1,56 @@
+# 运行时来源核对
+
+- 访问日期：2026-09-29
+- 结论：用户所指的「stepcode CLI 官方仓库」与仓库证据冲突。该冲突未解除前，不能选定 Agent 运行时核。
+
+## 用户陈述
+
+1. 官方 CLI 仓库是 https://github.com/stepcode/stepcode 。
+2. 本仓库要初始化，并用已有 GitHub 鉴权建立公开仓库。
+3. 以该官方 CLI 为本仓库的 Agent 运行时核，并随官方 CLI 更新。
+4. 用它替换 OrchDesk 现有的 dsh 运行时核。
+5. 将 chat/coding 模式精简为「部分信任」和「完全信任」。
+6. 先更新文档，不在来源未核清时改代码或建远程。
+
+## 上游仓库证据
+
+| 项 | 证据 |
+|---|---|
+| 仓库 | `stepcode/stepcode`，公开 |
+| 默认分支 | `develop` |
+| 访问时 tip | `24783b448511b8f6bce2829286a3f00015430236` |
+| tip 说明 | `Merge pull request #488 from ramcdona/ap203min-modern` |
+| tip 时间 | 2026-09-28T21:09:00Z |
+| 自述 | STEPcode，原 NIST STEP Class Library。读取 ISO 10303-11 EXPRESS，生成可读写 Part 21 文件的 C++/实验性 Python。许可为三条款 BSD |
+| 根目录 | `CMakeLists.txt`、`src/`、`include/`、`example/`、`test/`。没有 Agent、会话、工具调用或权限模式相关入口 |
+
+这是 CAD/STEP 交换库，不是 Agent CLI，也不能作为可随官方更新的 Agent 运行时核。
+
+GitHub 仓库搜索「stepcode」的前 15 条，没有另一份公开的 Agent CLI 与该 URL 同名。`ra1nzzz/stepcode` 在 2026-09-29 返回 404。
+
+## 本仓库与鉴权
+
+- 本地仓库 `stepcode` 尚无提交，也没有 remote。
+- 当前 `gh` 登录账号是 `ra1nzzz`，权限包含 `repo`。这只说明具备创建仓库的条件，不是已经创建。
+- `stepcode/stepcode` 不属于该账号，不能当作本仓库的远程。
+
+## OrchDesk 证据
+
+核对的本地检出 HEAD：`b68a955776dffd5fe45e3e0e2ca075d2b297ee65`。对应公开仓库 `ra1nzzz/orchdesk`。
+
+| 事实 | 位置 |
+|---|---|
+| 运行时底座是 deepseek-harness（dsh） | `docs/70-决策/ADR-0001-base-deepseek-harness.md` |
+| 当前基线 tag `dsh-v0.1.3-alpha.1`，提交 `d347e703908d0406b7a7ef80e3a0e594d86b2215` | `dsh.lock`；`docs/70-决策/ADR-0014-dsh-baseline-upgrade-0.1.3-alpha.1.md` |
+| 主进程装载 Cordis Context 与业务插件 | `apps/desktop/dsh-runtime.ts` |
+| 授权三档 `default` / `trusted` / `paranoid` | `packages/plugin/authz/src/index.ts` |
+| 界面双态是轻模式 / 项目模式，不是 chat/coding | `docs/superpowers/specs/2026-09-23-orchdesk-simplification-design.md` |
+| `chat` 是模型协议 `apiMode` 的一个值，不是信任档 | `apps/desktop/renderer/app.js` 的 provider 协议标签 |
+
+在 OrchDesk 文档和桌面源码中，没有名为 chat/coding、且表示信任档的产品模式。
+
+## 未采纳的解释
+
+- 不把 STEPcode 静默当成 Agent 运行时核。
+- 不把 OrchDesk 的授权三档、界面双态或模型协议 `chat` 静默改名为「部分信任 / 完全信任」。
+- 不在来源冲突未解除时创建公开仓库。公开名称一旦指向错误上游，后续更正成本高于推迟创建。

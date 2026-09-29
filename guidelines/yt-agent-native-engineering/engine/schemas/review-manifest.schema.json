@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "YT-ANSE Review Manifest",
+  "type": "object",
+  "required": ["review_id", "base", "head", "mode", "changed_files", "coverage"],
+  "properties": {
+    "review_id": {"type": "string"},
+    "base": {"type": "string"},
+    "head": {"type": "string"},
+    "mode": {"type": "string"},
+    "changed_files": {"type": "integer", "minimum": 0},
+    "reviewed_files": {"type": "array"},
+    "excluded_files": {"type": "array"},
+    "coverage": {"type": "number", "minimum": 0, "maximum": 1},
+    "ruleset_hash": {"type": "string"},
+    "lenses": {"type": "array"},
+    "groups": {"type": "array"}
+  }
+}
