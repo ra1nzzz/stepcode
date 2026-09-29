@@ -11,4 +11,4 @@
 | 快照路径 | `guidelines/yt-agent-native-engineering/` |
 | 获取方式 | `git clone --depth 1`，随后移除嵌套 `.git`，使快照成为本仓库普通文件 |
 
-快照内容与该提交的工作树一致，不包含上游 Git 历史。刷新准则时替换此目录，更新本文件、`docs/references/yt-anse.md` 和 `.ohmyagent/AGENTS.md` 的锁定提交，并新增 ADR。
+快照内容与该提交的工作树一致，不包含上游 Git 历史。刷新准则时替换此目录，更新本文件、`docs/00-项目/来源并入.md` 和 `.ohmyagent/AGENTS.md` 的锁定提交，并新增 ADR。知识库入口是 `docs/README.md`。本快照不是第二入口。

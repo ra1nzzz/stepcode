@@ -10,7 +10,7 @@
 - 提交时间：2026-09-29 15:00:56 +0800
 - 提交说明：`docs: add docs/terminology-and-ui-language.md`
 - 快照：`guidelines/yt-agent-native-engineering/`
-- 来源记录：`guidelines/PROVENANCE.md`、`docs/references/yt-anse.md`、`docs/adr/0001-adopt-yt-anse.md`
+- 来源记录：`guidelines/PROVENANCE.md`、`docs/00-项目/来源并入.md`、`docs/70-决策/0001-采用-yt-anse.md`
 
 快照是只读准则包。不得把项目知识写入快照。更新准则只能重新锁定上游提交，并另记决策。
 
@@ -22,7 +22,8 @@
 |---|---|
 | 准则文档、技能、引擎、参考文献 | `guidelines/yt-agent-native-engineering/` 下的同名路径 |
 | `docs/terminology-and-ui-language.md` | `guidelines/yt-agent-native-engineering/docs/terminology-and-ui-language.md` |
-| 项目规范性知识 `/docs` | 本仓库根目录 `docs/` |
+| 项目规范性知识 `/docs` | 本仓库根目录 `docs/`。唯一入口是 `docs/README.md` |
+| 上游知识模型的 `ontology/`、`glossary/`、`product/` 等目录 | 不采用。本仓库用 `docs/00-项目/` 至 `docs/99-归档/` |
 | 已加载的 `AGENTS.md` | 本文件。根目录 `AGENTS.md` 只是入口 |
 
 本仓库 `docs/` 只记录 stepcode 的意图、本体、术语、规格、架构、契约、决策、研究、参考、资产、状态、风险和已接受决定。准则仓库中的方法论文档不是 stepcode 的产品需求。
@@ -33,7 +34,7 @@
 
 1. 本文件
 2. 与任务相关的准则文档：`guidelines/yt-agent-native-engineering/docs/`
-3. 本仓库 `docs/` 中已有的项目知识
+3. 本仓库知识库唯一入口：`docs/README.md`
 4. Git 状态，以及相关代码、测试、入口
 5. 适用的 SPEC / ADR / CHECKPOINT
 
