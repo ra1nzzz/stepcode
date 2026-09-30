@@ -1,3 +1,10 @@
 .DS_Store
 Thumbs.db
 desktop.ini
+node_modules/
+dist/
+release/
+*.log
+.e2e*.txt
+.tmp-*
+.ohmyagent/settings.json

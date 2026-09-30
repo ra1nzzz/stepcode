@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "types": ["electron"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022"
+  },
+  "include": ["*.ts", "event-consumer/**/*.ts"],
+  "exclude": ["**/*verify*", "scripts", "renderer"]
+}

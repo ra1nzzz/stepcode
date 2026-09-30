@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none';">
+<title>OrchDesk · 会话优先的本地 Agent 工作台</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="vendor/xterm/xterm.css">
+</head>
+<body>
+
+<header class="titlebar">
+  <div class="logo">OD</div>
+  <span class="app-name">OrchDesk</span>
+  <span class="win-title" id="winTitle">会话 — 本地 Agent 工作台</span>
+  <!-- P4-S1-12：不再写死「1 专家在线」——专家数随编排目录变化，写死即撒谎。
+       由 app.js 按 orchestrationCatalog / expertList 真实条数刷新。 -->
+  <div class="tray-hint"><span class="tray-dot"></span><span id="trayText">本地运行</span></div>
+  <!-- 标题栏只留品牌/会话信息/时钟：浏览器·终端·文件的入口已下移到状态栏图标（右下角）
+       与右栏 TAB（文件），主题切换在左下角导航底部，此处不再重复摆按钮。 -->
+  <!-- 三入口轨（会话/插件/设置）常驻，主题切换在 rail 底部；不用汉堡菜单/导航抽屉替代。 -->
+  <span style="margin-left:auto" class="row">
+    <span style="color:var(--fg-faint)" id="clock"></span>
+  </span>
+</header>
+
+<div class="app" id="appGrid">
+  <nav class="rail" id="rail"></nav>
+  <aside class="side" id="side"></aside>
+  <main class="main" id="main"></main>
+  <aside class="context" id="context"></aside>
+  <!-- 浏览器侧栏（需求3）：与任务监控共用第 4 列。Agent 调用浏览器时自动展开并顶替
+       任务监控（两个侧栏同时展开会把主区挤没）；收起后任务监控自动回来。 -->
+  <aside class="browser-side" id="browserSide"></aside>
+</div>
+
+<!-- 终端（需求3）：底部抽屉，位于状态栏之上、主区之下。
+     在文档流里而不是 fixed 覆盖层 —— 展开时主区（flex:1）自动收缩，
+     全屏档位同样靠挤压上方空间实现，不遮挡任何内容。 -->
+<div id="terminalRoot" class="term-drawer hidden"></div>
+
+<div class="statusbar">
+    <span class="mut" id="statusText" style="color:var(--fg-dim)">OrchDesk Core</span>
+    <!-- 右下角图标区：浏览器（激活点亮）/ 终端（展开点亮）。文字按钮已从标题栏移除。 -->
+    <span class="sb-actions" id="sbActions"></span>
+</div>
+
+<div class="wizard hidden" id="wizard">
+  <div class="wz-card">
+    <div class="wz-body" id="wzBody"></div>
+    <div class="wz-foot">
+      <button class="btn ghost" data-action="wz-skip">跳过</button>
+      <button class="btn primary" data-action="wz-next" id="wzNext">继续</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalRoot"></div>
+<div id="menuRoot"></div>
+
+<div id="toastRoot" role="status" aria-live="polite"></div>
+<!-- 文件（P2-11）保持全屏覆盖层：预览/编辑/diff 需要宽幅，窄抽屉放不下。
+     它的入口已从标题栏按钮改为右栏「文件」TAB。 -->
+<div id="fileRoot" class="fullscreen-panel hidden"></div>
+
+<script src="vendor/marked.min.js"></script>
+<!-- M-3：DOMPurify——renderMD 的 HTML 消毒从正则白名单升级为真解析器消毒（防属性注入绕过） -->
+<script src="vendor/dompurify.min.js"></script>
+<!-- 终端（P2-10）与文件（P2-11）的 vendored 依赖：加载失败时 app.js 显式降级 -->
+<script src="vendor/xterm/xterm.js"></script>
+<script src="vendor/xterm/addon-fit.js"></script>
+<script src="vendor/shiki-bundle.js"></script>
+<!-- FR-6 分叉与回放：纯逻辑，无依赖，须在 app.js 之前加载 -->
+<script src="session-fork.js"></script>
+<!-- P3 文件编辑 diff：纯逻辑（行 diff + EOL 保护），须在 app.js 之前加载 -->
+<script src="file-edit.js"></script>
+<script src="bridge-stub.js"></script>
+<script src="actions/session.js"></script>
+<script src="actions/plugins.js"></script>
+<script src="actions/settings.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -2,7 +2,7 @@
 id: kb-index
 type: index
 status: canonical
-updated: 2026-09-29
+updated: 2026-09-30
 ---
 
 # stepcode 知识库
@@ -45,5 +45,8 @@ updated: 2026-09-29
 - [ADR 0004](70-决策/0004-gui-两档.md)
 - [ADR 0005](70-决策/0005-进程内嵌入与插件删除.md)
 - [ADR 0006](70-决策/0006-五件套控制面.md)
+- [ADR 0007](70-决策/0007-精简版归属.md)
 
 准则快照在仓库的 `guidelines/yt-agent-native-engineering/`。它是只读镜像，不是本知识库的第二入口。
+
+产品代码在 `apps/desktop`。它既是文档仓库也是代码仓库（[ADR 0007](70-决策/0007-精简版归属.md)）。文档不写实现细节，代码注释不复制规格。

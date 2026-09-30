@@ -1,0 +1,17 @@
+{
+  "name": "stepcode",
+  "private": true,
+  "type": "module",
+  "description": "stepcode — 桌面 GUI 壳（Electron 主进程 + 渲染层桥接），接锁定点 @step-harness/coding-agent",
+  "packageManager": "pnpm@11.8.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "typecheck": "pnpm --filter @orchdesk/desktop run typecheck",
+    "verify": "pnpm --filter @orchdesk/desktop run verify"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

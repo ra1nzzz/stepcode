@@ -1,0 +1,105 @@
+{
+  "name": "@orchdesk/desktop",
+  "version": "0.16.2",
+  "private": true,
+  "description": "OrchDesk 桌面壳（Electron 主进程 + 渲染层桥接）",
+  "author": "OrchDesk Team",
+  "packageManager": "pnpm@11.8.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ra1nzzz/stepcode.git"
+  },
+  "main": "dist/main.js",
+  "scripts": {
+    "start": "pnpm run build:main && electron .",
+    "build:main": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "kill": "node kill-running.cjs",
+    "check-version": "node scripts/check-version.cjs",
+    "build": "node scripts/check-version.cjs --allow-tagged && pnpm run build:main && electron-builder",
+    "dist": "node scripts/check-version.cjs && pnpm run build:main && node kill-running.cjs && electron-builder --publish never",
+    "dist:win": "node scripts/check-version.cjs && pnpm run build:main && node scripts/vendor-dsh.cjs && node kill-running.cjs && electron-builder --win --publish never",
+    "dist:portable": "node scripts/check-version.cjs && pnpm run build:main && node scripts/vendor-dsh.cjs && node kill-running.cjs && electron-builder --win portable --publish never",
+    "vendor:dsh": "node scripts/vendor-dsh.cjs",
+    "smoke:browser": "electron scripts/browser-smoke.cjs",
+    "verify:plugins": "node ../../scripts/verify-plugins.mjs",
+    "verify": "pnpm run build:main && node scripts/check-version.cjs docs && node ../../scripts/verify-plugins.mjs && node ../../scripts/intent-gate-verify.cjs && node ../../scripts/verify-orchestration.mjs && node ../../scripts/verify-trace-upload.mjs && node agent-runtime-verify.cjs && node agent-loop-verify.cjs && node model-loop-verify.cjs && node model-catalog-verify.cjs && node dsh-runtime-verify.cjs && node step-extension-verify.cjs && node step-t4-verify.cjs && node step-session-verify.cjs && node ipc-guard-verify.cjs && node credentials-verify.cjs && node data-dir-verify.cjs && node data-port-verify.cjs && node session-fork-verify.cjs && node memory-promotion-verify.cjs && node memory-summarize-verify.cjs && node connector-registry-verify.cjs && node connector-discover-verify.cjs && node plugin-market-verify.cjs && node usage-registry-verify.cjs && node session-events-verify.cjs && node ts-loader-verify.cjs && node browser-tools-verify.cjs && node terminal-pty-verify.cjs && node file-panel-verify.cjs && node file-edit-verify.cjs && node arch-guard-verify.cjs && node mcp-client-verify.cjs && node ipc-mcp-verify.cjs && node event-emit-verify.cjs && node session-merge-verify.cjs && node e2e-fix-verify.cjs",
+    "changelog": "node ../../scripts/changelog.mjs --write",
+    "version:bump": "bumpp",
+    "version:show": "node -e \"const p=require('./package.json');const v=p.version;const{execSync}=require('child_process');const tags=execSync('git tag --sort=-version:refname').toString().trim().split('\\n').filter(Boolean);console.log('version:',v,'| latest tag:',tags[0]||'none','| total tags:',tags.length)\"",
+    "release": "pnpm run changelog && pnpm run version:bump && pnpm run dist"
+  },
+  "devDependencies": {
+    "bumpp": "^11.1.0",
+    "conventional-changelog-cli": "^5.0.0",
+    "electron": "^36.0.0",
+    "electron-builder": "^26.0.0",
+    "electron-updater": "^6.8.9",
+    "playwright": "1.62.1",
+    "tsx": "^4.23.13",
+    "typescript": "^5.6.0"
+  },
+  "build": {
+    "appId": "com.orchdesk.app",
+    "productName": "OrchDesk",
+    "icon": "build/icon.png",
+    "asar": true,
+    "asarUnpack": [
+      "vendor/node-pty/**"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "renderer/**/*",
+      "vendor/**/*",
+      "build/trace-token.enc.json",
+      "build/trace-key.local",
+      "package.json"
+    ],
+    "extraFiles": [
+      {
+        "from": "node_modules/@deepseek-ai",
+        "to": "node_modules/@deepseek-ai",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ra1nzzz",
+        "repo": "orchdesk"
+      }
+    ]
+  },
+  "dependencies": {
+    "dompurify": "^3.4.15",
+    "marked": "^18.0.11",
+    "png-to-ico": "^3.0.2"
+  }
+}
