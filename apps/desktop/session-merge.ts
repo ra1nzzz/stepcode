@@ -1,6 +1,6 @@
 /**
  * 会话合并（读-改-写竞态修复）：
- * persist-sessions 以渲染层快照整表替换 store，而 agent-turn 同时在往 store 写
+ * persist-sessions 以渲染层快照整表替换 store，而 step-session 同时在往 store 写
  * 模型回复——渲染层持旧快照时一次 persist 会把刚生成的 assistant 回复抹掉。
  *
  * 策略（main 侧写入优先，元数据渲染层权威）：

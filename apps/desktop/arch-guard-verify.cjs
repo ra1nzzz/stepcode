@@ -342,7 +342,7 @@ function scanRule(rule, code, fileName) {
     assert(Number(sliderMatch[1]) === cap, `渲染层滑块 max=${sliderMatch[1]} 与 MAX_TOOL_ITERATIONS_CAP=${cap} 不一致`);
 
     // 钳制点必须引用常量而非裸数字。
-    for (const f of ['main.ts', 'agent-turn.ts']) {
+    for (const f of ['main.ts', 'step-session.ts']) {
       const src = stripComments(read(path.join(APP_DIR, f)));
       const stray = src.match(/Math\.min\(\s*\d{3}\s*,\s*incoming\.maxToolIterations|Math\.min\(\s*\d{3}\s*,\s*modelCfg\.maxToolIterations/g);
       assert(!stray, `${f} 存在裸数字钳制（应引用 MAX_TOOL_ITERATIONS_CAP）：${stray && stray.join(', ')}`);

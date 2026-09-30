@@ -1,7 +1,7 @@
 /**
  * MCP IPC 行为层验证（审查缺口补齐：此前 mcp-client-verify 只覆盖客户端协议，
  * 「配置→保存→启用→调用→错误回显」这条 IPC 面零覆盖）。
- * 进程内驱动真实 handler（stub electron + 真实主进程装载，与 agent-loop-verify 同手法）。
+ * 进程内驱动真实 handler（stub electron + 真实主进程装载，与 step-t5-verify 同手法）。
  */
 const assert = require('node:assert');
 const path = require('path');

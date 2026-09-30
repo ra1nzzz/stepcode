@@ -4,7 +4,7 @@
  * A 组：纯逻辑（require dist/usage-registry.js）—— 三家 API 的 usage 形态归一化
  *      （chat / responses / Ollama / 缺字段）/ 追加与环形 / 聚合 / 文件 roundtrip。
  * B 组：stub electron 驱动真实 IPC —— 种子 usage.json → orchdesk:usage 聚合视图
- *      → usage-clear 归零。「回合产生条目」的线级验证在 model-loop-verify.cjs
+ *      → usage-clear 归零。「回合产生条目」的线级验证在 step-t5-verify.cjs
  *      （那里有真 HTTP mock 的完整 agent 回合）。
  *
  * 运行：node usage-registry-verify.cjs

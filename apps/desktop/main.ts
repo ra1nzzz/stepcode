@@ -33,7 +33,7 @@ import { registerMemoryIpc, loadPromotionLog, type MemoryServiceLike } from './i
 import { registerPromptIpc } from './ipc-prompt';
 import { registerPluginCapabilityIpc, type CompensationServiceLike } from './ipc-plugins';
 import { APPROVAL_TIMEOUT_MS, getHostServices } from './host-services';
-import { connectStepExtension, createGuiStepConfirm, currentStepExtension, listGuiPermissionModes, selectGuiPreset } from './step-extension';
+import { connectStepExtension, createGuiStepConfirm, currentStepExtension, listGuiPermissionModes, resolveStepCheckout, selectGuiPreset } from './step-extension';
 import { withTimeout } from './memory-summarize';
 import { encryptSecret, decryptSecret, isV1Cipher } from './credentials';
 import { initLogger, mirrorConsole, log, logFilePath } from './logger';
@@ -67,7 +67,7 @@ import {
 import { isAbsoluteLike } from './common-tools';
 import { callModel as callModelHttp, initModelClient } from './model-client';
 import { initModelCatalog, refreshCatalogInBackground, getCatalogPresets, listAvailableModels } from './model-catalog';
-import { abortAgentTurn, clearToolRejectMemo, hasActiveTurn, initAgentTurn, runAgentTurn } from './agent-turn';
+import { abortStepSession, hasActiveStepTurn, runStepSessionTurn, type StepSessionHost, type StepUiContext } from './step-session';
 import { executeTool, initToolExec, sessionCwd, setSessionCwd } from './tool-exec';
 import { registerBrowserIpc } from './ipc-browser';
 import { preloadTerminalPty, registerTerminalIpc } from './ipc-terminal';
@@ -87,12 +87,12 @@ import { registerDesktopIpc } from './ipc-desktop';
 // 桥接契约（渲染进程经 contextBridge 调用，红线：nodeIntegration:false）：
 //   orchdesk:load-sessions()             启动时拉取持久化会话（空 = 首次运行）
 //   orchdesk:persist-sessions(arr)       任意变更后落盘（userData JSON，可重启回放）
-//   orchdesk:run-agent-turn(id,text,opt) 模型回合 seam：真实 dsh ctx / Ollama 在此接入
+//   orchdesk:run-agent-turn(id,text,opt) 用户回合 seam：由 Step 会话执行（step-session.ts）
 //
-// 设计：渲染进程持有 UI 会话状态；主进程负责「持久化」与「模型运行时」两层。
-// run-agent-turn 走主进程自实现的 OpenAI 兼容 HTTP 回合循环（runAgentTurn，
-// 工具经 executeTool 双模式：原生 function calling / 文本兜底），未走 dsh 的
-// ctx.agents.followup seam（后者留作未来切 dsh 原生于代理循环时的入口）。
+// 设计：渲染进程持有 UI 会话状态；主进程负责「持久化」与「会话执行」两层。
+// T5 起 run-agent-turn 走锁定点的 AgentSession（createStepAgentSession），会话
+// 经 DefaultResourceLoader 挂上本 GUI 已组合的 Step 扩展：工具裁决、两档权限、
+// 危险命令确认都在锁定点侧，本 GUI 只提供确认弹窗。dsh 已卸下。
 // ============================================================================
 
 const isDev = !app.isPackaged;
@@ -433,7 +433,7 @@ function nowTime(): string { return new Date().toLocaleTimeString('zh-CN', { hou
 // 桥接契约（渲染进程经 contextBridge 调用，红线：nodeIntegration:false）：
 //   orchdesk:load-sessions()             启动时拉取持久化会话
 //   orchdesk:persist-sessions(arr)       任意变更后落盘
-//   orchdesk:run-agent-turn(id,text,opt) Agent 回合（工具调用 + 真实模型）
+//   orchdesk:run-agent-turn(id,text,opt) 用户回合（工具调用 + Step 会话）
 // ============================================================================
 
 // --- 工具执行引擎：见 tool-exec.ts ---
@@ -546,21 +546,66 @@ initConnectors({ dataDir });
 initMcp({ dataDir });
 initMarket({ dataDir });
 
-initAgentTurn({
-  loadModelConfig,
-  getSession: (id) => store[id] as { msgs?: Array<{ role?: string; text?: string } & Record<string, unknown>> } | undefined,
-  ensureSession: (id) => {
-    if (!store[id]) {
-      store[id] = { id, msgs: [], created: new Date().toISOString(), updated: new Date().toISOString() };
-    }
-  },
-  saveStore,
-  dataDir,
+// T5：作曲栏发送由 Step 会话执行（见 step-session.ts）。界面上下文全部走本 GUI 的
+// confirm：锁定包的权限控制器在 tool_call 上读 ctx.ui.confirm，只有这一个审批入口。
+// 其余 UI 方法是主进程里的空操作——本 GUI 的界面就是渲染层，主进程不另画一套。
+const stepSessionHost: StepSessionHost = {
+  extension: () => currentStepExtension()?.extension,
+  preset: () => currentStepExtension()?.preset ?? 'bypass',
   sessionCwd,
-  executeTool,
   notifyAgentDelta,
   notifyToolStep,
-});
+  uiContext: () => buildStepUiContext(),
+  root: () => resolveStepCheckout(),
+};
+
+function buildStepUiContext(): StepUiContext {
+  return {
+    select: async () => undefined,
+    // 没有已接上的组合时返回 false，不放行——与没有确认界面同义。
+    confirm: async (title, message, opts) => {
+      const ask = currentStepExtension()?.confirm;
+      if (!ask) return false;
+      return ask(title, message, opts as { signal?: AbortSignal });
+    },
+    input: async () => undefined,
+    notify: () => {},
+    onTerminalInput: () => () => {},
+    setStatus: () => {},
+    setWorkingMessage: () => {},
+    setWorkingVisible: () => {},
+    setWorkingIndicator: () => {},
+    setHiddenThinkingLabel: () => {},
+    setWidget: () => {},
+    setFooter: () => {},
+    setHeader: () => {},
+    setTitle: () => {},
+    custom: async () => undefined,
+    pasteToEditor: () => {},
+    setEditorText: () => {},
+    getEditorText: () => '',
+    editor: async () => undefined,
+    addAutocompleteProvider: () => {},
+    setEditorComponent: () => {},
+    getEditorComponent: () => undefined,
+    theme: buildStepUiTheme(),
+    getAllThemes: () => [],
+    getTheme: () => 'default',
+    setTheme: () => ({}),
+    getToolsExpanded: () => false,
+    setToolsExpanded: () => {},
+  };
+}
+
+/** 锁定包的界面上下文会读 ctx.ui.theme.fg(...) 之类；缺字段要到调用点才抛，这里补全。 */
+function buildStepUiTheme(): Record<string, (value: string) => string> {
+  const color = (value: string) => value;
+  return {
+    fg: color, bg: color, bold: color, italic: color, dim: color, underline: color,
+    inverse: color, strikethrough: color, primary: color, success: color, error: color,
+    warning: color, info: color, muted: color, accent: color,
+  };
+}
 
 // 测试后门（非渲染层桥）：browser-tools-verify / credentials-verify 经此驱动
 // executeTool 做接线级断言。渲染层不触达（preload 无对应 invoke），生产仅作
@@ -602,10 +647,10 @@ ipcMain.handle('orchdesk:plugin-set-enabled', async () => {
   return { ok: false, unavailable: true, reason: DSH_UNLOAD_REASON };
 });
 ipcMain.handle('orchdesk:persist-sessions', async (_e, sessions: unknown[]) => {
-  // 读-改-写竞态修复（复审项⑤）：渲染层快照整表替换会把 agent-turn 刚写入的
+  // 读-改-写竞态修复（复审项⑤）：渲染层快照整表替换会把 step-session 刚写入的
   // assistant 回复抹掉。合并策略见 session-merge.ts：msgs 去重合并（stored 优先），
   // 元数据取 incoming；snapshot 缺失视为删除，但进行中回合的会话不删。
-  const { merged, deleted } = mergeStores(store as Record<string, never>, (sessions || []) as never, { isActive: (id) => hasActiveTurn(id) });
+  const { merged, deleted } = mergeStores(store as Record<string, never>, (sessions || []) as never, { isActive: (id) => hasActiveStepTurn(id) });
   store = merged;
   if (deleted.length) log('INFO', 'sessions', `渲染层删除会话：${deleted.join(', ')}`);
   saveStore();
@@ -695,14 +740,14 @@ ipcMain.handle('orchdesk:persist-projects', async (_e, projects: unknown[]) => {
 });
 ipcMain.handle('orchdesk:run-agent-turn', async (_e, sessionId: unknown, text: unknown, opts: unknown) => {
   // R4-3：补运行时入参闸门。同文件的 terminal/mcp/connector/file-panel handler 都有
-  // typeof 校验，此处原是例外——text 非字符串时 agent-turn 的 text.slice(0,64) 直接抛
+  // typeof 校验，此处原是例外——text 非字符串时旧实现直接抛
   // TypeError 把整条链路带崩。预载层有 TS 标注，但 IPC 边界不能只靠类型。
   if (typeof sessionId !== 'string' || !sessionId) return { text: '', intent: 'ERROR', error: 'sessionId 不合法' };
   if (typeof text !== 'string' || !text) return { text: '', intent: 'ERROR', error: 'text 不合法（必须是非空字符串）' };
-  return runAgentTurn(sessionId, text, opts as { models?: string[]; thinkLevel?: string });
+  return runStepSessionTurn(sessionId, text, stepSessionHost);
 });
 ipcMain.handle('orchdesk:abort-agent-turn', async (_e, sessionId: string) => {
-  return abortAgentTurn(String(sessionId || ''));
+  return abortStepSession(String(sessionId || ''));
 });
 
 // ---- R5-01：本地版本源（状态栏显示用，不再向上游仓库要 commit） ----
@@ -739,8 +784,6 @@ ipcMain.handle('orchdesk:models-save', async (_e, config: unknown) => {
     if (incoming.defaultModel) current.defaultModel = incoming.defaultModel;
     // 与运行时钳制一致（1–500，单源常量 MAX_TOOL_ITERATIONS_CAP），保证所见即所得。
     if (incoming.maxToolIterations) current.maxToolIterations = Math.max(1, Math.min(MAX_TOOL_ITERATIONS_CAP, incoming.maxToolIterations));
-    // M-1：模型配置变更后失效「网关拒 tools」毒化 memo，重新尝试原生协议。
-    clearToolRejectMemo();
     saveModelConfig(current);
     return { ok: true };
   } catch (err) {

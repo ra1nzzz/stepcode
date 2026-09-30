@@ -13,6 +13,7 @@ pnpm install
 pnpm run typecheck   # 桌面 tsc
 cd apps/desktop
 node step-t4-verify.cjs   # 工具调用符合锁定点裁决，危险命令走本 GUI 确认
+node step-t5-verify.cjs   # 用户发送由 Step 会话执行，不再走 OpenAI 循环
 ```
 
 不要用 `pnpm run verify` 当验收。它会因锁文件变化去核对全仓依赖。直接跑具体脚本，见 [检查点](docs/00-项目/检查点.md)。
