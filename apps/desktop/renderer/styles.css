@@ -50,7 +50,7 @@ body{font:13px/1.55 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-se
   .app.browser-mode{grid-template-columns:48px 270px 1fr 300px}
 }
 .titlebar{height:38px;flex:none;display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--bg-panel);border-bottom:1px solid var(--border);user-select:none}
-.titlebar .logo{width:18px;height:18px;border-radius:6px;background:linear-gradient(135deg,var(--ceo-solid),var(--accent));display:grid;place-items:center;color:#fff;font-size:12px;font-weight:700}
+.titlebar .logo{width:18px;height:18px;border-radius:6px;background:var(--ceo-solid);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:700}
 .titlebar .app-name{font-weight:600}
 .titlebar .win-title{color:var(--fg-dim);font-size:12px}
 .titlebar .tray-hint{display:flex;align-items:center;gap:6px;color:var(--fg-dim);font-size:12px;background:var(--bg-inset);border:1px solid var(--border);border-radius:20px;padding:4px 10px}
@@ -890,6 +890,12 @@ table.tb td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align
    → 任务监控 5s 后自动收起 → 浏览器侧栏仍在 → 布局错乱。 */
 .app.light.browser-mode{grid-template-columns:48px 270px 1fr 300px}
 .home-note{margin-top:16px;color:var(--fg);font-size:15px;font-weight:600;text-align:center;line-height:1.5}
+.turn-strip{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:8px 12px;border-radius:10px;background:var(--ceo-soft);color:var(--fg)}
+.turn-strip.wait{background:var(--warn-soft)}
+.turn-label{font-size:12px;font-weight:700;color:var(--ceo-solid);flex:none}
+.turn-strip.wait .turn-label{color:var(--warn)}
+.turn-reason{font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.turn-progress{margin-left:auto;font-size:12px;color:var(--fg-dim);flex:none}
 .app.browser-mode .context{display:none}
 .app.browser-mode .browser-side{display:flex}
 .bw-head{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--border);

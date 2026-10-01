@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none';">
-<title>OrchDesk · 会话优先的本地 Agent 工作台</title>
+<title>StepCode Desktop · 会话优先的本地 Agent 工作台</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="vendor/xterm/xterm.css">
 </head>
@@ -11,7 +11,7 @@
 
 <header class="titlebar">
   <div class="logo">OD</div>
-  <span class="app-name">OrchDesk</span>
+  <span class="app-name">StepCode Desktop</span>
   <span class="win-title" id="winTitle">会话 — 本地 Agent 工作台</span>
   <!-- P4-S1-12：不再写死「1 专家在线」——专家数随编排目录变化，写死即撒谎。
        由 app.js 按 orchestrationCatalog / expertList 真实条数刷新。 -->
@@ -40,7 +40,7 @@
 <div id="terminalRoot" class="term-drawer hidden"></div>
 
 <div class="statusbar">
-    <span class="mut" id="statusText" style="color:var(--fg-dim)">OrchDesk Core</span>
+    <span class="mut" id="statusText" style="color:var(--fg-dim)">StepCode Desktop</span>
     <!-- 右下角图标区：浏览器（激活点亮）/ 终端（展开点亮）。文字按钮已从标题栏移除。 -->
     <span class="sb-actions" id="sbActions"></span>
 </div>

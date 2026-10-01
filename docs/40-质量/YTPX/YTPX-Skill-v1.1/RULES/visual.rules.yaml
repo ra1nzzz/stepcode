@@ -1,0 +1,12 @@
+
+visual:
+  color:
+    max_primary_colors: 3
+    require_semantic_token: true
+  spacing:
+    grid: 8
+  typography:
+    hierarchy_required: true
+  motion:
+    max_duration: 600ms
+    require_purpose: true

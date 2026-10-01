@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "required": [
+    "score",
+    "evidence",
+    "recommendation"
+  ]
+}

@@ -40,7 +40,7 @@
   },
   "build": {
     "appId": "com.orchdesk.app",
-    "productName": "OrchDesk",
+    "productName": "StepCode Desktop",
     "icon": "build/icon.png",
     "asar": true,
     "asarUnpack": [

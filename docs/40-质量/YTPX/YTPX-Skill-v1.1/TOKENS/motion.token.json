@@ -1,0 +1,7 @@
+{
+  "instant": "100ms",
+  "fast": "150ms",
+  "default": "250ms",
+  "slow": "400ms",
+  "emphasis": "600ms"
+}

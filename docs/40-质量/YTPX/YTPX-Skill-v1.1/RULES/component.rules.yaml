@@ -1,0 +1,5 @@
+
+component:
+  no_duplicate_components: true
+  token_required: true
+  consistent_behavior: true

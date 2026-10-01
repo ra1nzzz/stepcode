@@ -511,9 +511,9 @@
   /** 自启动描述如实反映「系统实际状态」：写了但系统没接受 → 明确提示，不假装已生效。 */
   function desktopAutostartDesc() {
     const d = state.desktop;
-    if (!d) return '开机时启动 OrchDesk';
+    if (!d) return '开机时启动 StepCode Desktop';
     if (d.config.autostart && d.autostartEffective === false) return '开机时启动 · 系统未接受该设置';
-    return '开机时启动 OrchDesk';
+    return '开机时启动 StepCode Desktop';
   }
 
   /** 悬浮窗内容由渲染层推送（主进程不猜「当前会话」）。未开启悬浮窗时不发 IPC。 */
@@ -914,6 +914,27 @@
       <div class="switch ${on ? 'on' : ''}${disabled ? ' disabled' : ''}" data-action="desktop-toggle" data-dk="${esc(key)}" role="switch" aria-checked="${on}" aria-label="${esc(name)}"></div>
     </div>`;
   }
+  /**
+   * 主区回合条。右栏默认关闭，进行中的状态、进度和原因不能只放在那里。
+   * 数据与右栏同源（toolSteps / pendingConfirm），不另造一份。
+   */
+  function renderTurnStrip(s) {
+    const live = Array.isArray(state.toolSteps[s.id]) ? state.toolSteps[s.id] : [];
+    const running = state.turnBusy === s.id;
+    const waiting = !!state.pendingConfirm;
+    if (!running && !waiting && !live.length) return '';
+    const done = live.filter((t) => t.ph === 'done').length;
+    const current = [...live].reverse().find((t) => t.ph !== 'done') || live[live.length - 1];
+    const reason = current ? (current.n || '工具') : (waiting ? '有一个动作需要你确认' : '正在组织回复');
+    const label = waiting ? '等待确认' : (running ? '正在进行' : '这一回合');
+    const progress = live.length ? `${done}/${live.length}` : '';
+    return `<div class="turn-strip ${waiting ? 'wait' : 'run'}" role="status">
+      <span class="turn-label">${label}</span>
+      <span class="turn-reason">${esc(reason)}</span>
+      ${progress ? `<span class="turn-progress">${progress}</span>` : ''}
+    </div>`;
+  }
+
   function renderMsg(m, sid) {
     const isU = (m.r || m.role) === 'user';
     const intentBadge = m.intent && m.intent !== 'ACT'
@@ -965,7 +986,7 @@
     }
     return `<div class="msg ${isU ? 'user' : 'agent'}${m.typing ? ' typing' : ''}">
       <div class="avatar">${isU ? '我' : 'AI'}</div>
-      <div class="body"><div class="meta"><b>${isU ? '你' : 'OrchDesk'}</b><span>${m.t}</span>${intentBadge}${tok}</div>
+      <div class="body"><div class="meta"><b>${isU ? '你' : 'StepCode'}</b><span>${m.t}</span>${intentBadge}${tok}</div>
       <div class="md-body">${txt}</div>${sub}${tools}${fb}</div></div>`;
   }
 
@@ -1383,7 +1404,7 @@
       <p class="home-note">从一句话开始。不会替你编任务。</p>
       <div class="home-input-wrap">
         <div class="composer"><div class="box">
-          <textarea id="homeComposer" placeholder="向 OrchDesk 提问…" rows="1"></textarea>
+          <textarea id="homeComposer" placeholder="向 StepCode 提问…" rows="1"></textarea>
           <div id="outboundWarn" class="outbound-warn" hidden></div>
           ${composerBarHTML('home-send')}
         </div></div>
@@ -1484,6 +1505,7 @@
 
       return `<div style="flex:1;overflow-y:auto" id="msgScroll">
         <div style="max-width:760px;margin:0 auto;padding:18px 16px 10px">
+          ${renderTurnStrip(s)}
           <div class="row" style="justify-content:space-between;margin-bottom:4px">
             <div class="row"><b class="sess-title">${esc(s.title)}</b>
               <span class="badge info">${esc(s.expert)}</span></div>
@@ -2345,7 +2367,7 @@
         </div>
         <div class="sec-title" id="settings-section-about"><span class="ico">${ic('at', 14)}</span>关于</div>
         <div class="card">
-          <div class="row" style="justify-content:space-between"><span>OrchDesk 桌面壳</span><b>P6</b></div>
+          <div class="row" style="justify-content:space-between"><span>StepCode Desktop</span><b>P6</b></div>
           <div class="faint" style="margin-top:4px">会话优先的本地 Agent 工作台</div>
           <div class="faint" style="margin-top:8px;font-size:11.5px">底座 deepseek-harness（Cordis）· 基线 99f6f02</div>
         </div>
@@ -2371,12 +2393,12 @@
 
   /* ---------- 向导 ---------- */
   const WZ = [
-    { t: '欢迎使用 OrchDesk', h: `<div style="font-size:18px;font-weight:700;margin-bottom:8px">本地优先的 Agent 工作台</div>
+    { t: '欢迎使用 StepCode Desktop', h: `<div style="font-size:18px;font-weight:700;margin-bottom:8px">本地优先的 Agent 工作台</div>
       <div class="mut" style="margin-bottom:14px">打开就是会话。像 DSH 一样，你只需和一个 Agent 对话；脑-手解耦、多Agent编排、意图识别在后台安静运行，需要时再进「插件」或「设置」。</div>
       // P4-S1-13：不再写死「deepseek-harness 运行时 · 就绪 · 基线 99f6f02」——徽章和
       // commit 全无运行时背书，与 statbar 里同款硬编码曾被当 BUG 修掉是同一模式。
       // 向导是纯本地引导，只说本地运行，不冒充任何后端状态。
-      <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;display:flex;gap:10px;align-items:center"><span class="badge ok">本地</span><div><b>OrchDesk 运行时</b><div class="faint">数据留在本机 · 模型可随时配置</div></div></div>` },
+      <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;display:flex;gap:10px;align-items:center"><span class="badge ok">本地</span><div><b>StepCode 运行时</b><div class="faint">数据留在本机 · 模型可随时配置</div></div></div>` },
     { t: '选择默认专家', h: `<div style="margin-bottom:10px" class="mut">你想先和谁对话？（之后可随时切换，或用专家团）</div>
       ${expertList().map((e, i) => `<div class="expert-opt ${state.wzExpert === i ? 'sel' : ''}" data-action="wz-expert" data-i="${i}"><div class="avatar" style="background:${i === 0 ? 'var(--ceo)' : 'var(--director)'}">${e[0]}</div><div><b>${e}</b><div class="faint">${i === 0 ? '主会话：理解/拆解/回收/沉淀' : '领域专家'}</div></div></div>`).join('')}` }
   ];
@@ -2861,7 +2883,7 @@
       const echo = String(text || '').slice(0, 60);
       s.msgs[typingIdx] = {
         r: 'agent', t: nowTime(),
-        x: `【演示模式 · 本地回显，未调用任何模型】\n\n收到你的输入：「${echo}」\n\n这一步是为了让你在配置模型之前就把 OrchDesk 全部界面逛完：\n· 右栏检查器随回合浮出，上面是这一回合的步骤\n· 侧栏按工作目录分组；输入栏可设默认工作目录\n· 分叉 / 回放 / 技能 / 终端 / 文件面板都可以直接点开看\n\n配置任意 OpenAI 兼容 API（或本机 Ollama）后，同样的输入会得到真实模型回复。点 composer 里的模型 chip 即可配置。`,
+        x: `【演示模式 · 本地回显，未调用任何模型】\n\n收到你的输入：「${echo}」\n\n这一步是为了让你在配置模型之前就把 StepCode Desktop 全部界面逛完：\n· 右栏检查器随回合浮出，上面是这一回合的步骤\n· 侧栏按工作目录分组；输入栏可设默认工作目录\n· 分叉 / 回放 / 技能 / 终端 / 文件面板都可以直接点开看\n\n配置任意 OpenAI 兼容 API（或本机 Ollama）后，同样的输入会得到真实模型回复。点 composer 里的模型 chip 即可配置。`,
         // intent 用 'ACT'：renderMsg 只对 intent !== 'ACT' 挂徽标，且非 CONFIRM
         // 一律渲染成「意图 · 已拦截」——演示回复挂个拦截徽标是彻底的误告。
         intent: 'ACT', feedback: 1,
@@ -4833,7 +4855,7 @@ let outboundTimer = null;
     try {
       const el = $('#statusText');
       const v = typeof bridge.getAppVersion === 'function' ? await bridge.getAppVersion() : null;
-      if (el && v && v.version) el.textContent = 'OrchDesk Core · v' + v.version;
+      if (el && v && v.version) el.textContent = 'StepCode Desktop · v' + v.version;
     } catch { /* 拿不到本地版本就保持初值，不编造 */ }
     console.log('[init] done');
   }

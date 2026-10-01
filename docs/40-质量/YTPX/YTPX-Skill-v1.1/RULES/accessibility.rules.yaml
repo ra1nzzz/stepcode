@@ -1,0 +1,8 @@
+
+accessibility:
+  contrast:
+    required: true
+  keyboard_navigation:
+    required: true
+  focus_state:
+    required: true

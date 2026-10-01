@@ -103,6 +103,6 @@ window.orchdeskBridgeStub = {
       // P2 模型内嵌：本机 Ollama 自发现。无桥时 ok=false（chip 显示「未配置模型」），
       // 不用空数组冒充「探过但没装」——两者对用户的下一步动作完全不同。
       probeOllama: () => Promise.resolve({ ok: false, models: [], reason: '主进程未接入' }),
-      // R5-01：预览态拿不到本地版本 → 返回空，状态栏保持初值「OrchDesk Core」，不编造
+      // R5-01：预览态拿不到本地版本 → 返回空，状态栏保持初值「StepCode Desktop」，不编造
       getAppVersion: () => Promise.resolve({ version: '' }),
     };

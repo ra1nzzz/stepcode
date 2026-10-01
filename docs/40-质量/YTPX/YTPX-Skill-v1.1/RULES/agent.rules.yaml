@@ -1,0 +1,7 @@
+
+agent:
+  require_state: true
+  require_progress: true
+  require_explainability: true
+  require_permission_control: true
+  high_risk_action_confirmation: true

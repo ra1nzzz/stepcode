@@ -371,7 +371,7 @@ function installSettingsActions(ACTIONS, ctx) {
           if (!r || !r.ok) { ctx.toast((r && r.reason) || '切换失败', 'err'); return; }
           ctx.state.traceEnabled = !cur;
           ctx.updateTraceUi();
-          ctx.toast(r.requiresRestart ? '已保存 · 重启 OrchDesk 后生效' : '已保存', 'ok');
+          ctx.toast(r.requiresRestart ? '已保存 · 重启 StepCode Desktop 后生效' : '已保存', 'ok');
         }).catch((e) => ctx.toast('切换失败: ' + ((e && e.message) || e), 'err'));
         return;
       }

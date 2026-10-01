@@ -1,0 +1,11 @@
+{
+  "brand.primary": "#2563EB",
+  "surface.primary": "#FFFFFF",
+  "surface.secondary": "#F8FAFC",
+  "text.primary": "#111827",
+  "state.success": "#16A34A",
+  "state.warning": "#D97706",
+  "state.error": "#DC2626",
+  "agent.thinking": "#6366F1",
+  "agent.executing": "#2563EB"
+}

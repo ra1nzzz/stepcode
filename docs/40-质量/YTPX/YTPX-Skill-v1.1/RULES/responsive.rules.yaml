@@ -1,0 +1,5 @@
+
+responsive:
+  desktop_required: true
+  mobile_required: true
+  adaptive_information_architecture: true

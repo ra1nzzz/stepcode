@@ -678,7 +678,7 @@ async function run() {
   await assert(await titlebar.count() > 0, '标题栏存在');
 
   const appName = page.locator('.titlebar .app-name');
-  await assert(await appName.count() > 0 && await appName.innerText() === 'OrchDesk', '应用名 "OrchDesk" 显示');
+  await assert(await appName.count() > 0 && await appName.innerText() === 'StepCode Desktop', '应用名 "StepCode Desktop" 显示');
 
   const winTitle = page.locator('.titlebar .win-title');
   await assert(await winTitle.count() > 0, '窗口标题 .win-title 显示');
