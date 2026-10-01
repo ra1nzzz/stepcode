@@ -6,7 +6,7 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { OFFICIAL_STEP_SOURCE, readStepOrigin, resolveStepCheckout } from './step-extension';
+import { OFFICIAL_STEP_SOURCE, readStepOrigin, resolveStepCheckout, stepRuntimeEntry } from './step-extension';
 
 export interface FollowResult {
   updated: boolean;
@@ -72,12 +72,18 @@ export function prepareOfficialRuntime(): { root?: string; note: string } {
   }
   const origin = readStepOrigin(root);
   if (!origin || origin.source !== OFFICIAL_STEP_SOURCE) {
-    return { note: '没有官方源仓库检出，使用随包锁定点' };
+    return { note: '没有官方源仓库检出，使用随包运行时' };
+  }
+  // 包内运行时没有 .git，快进不了，也不需要：它就是这次打包用的那一版。
+  if (!fs.existsSync(path.join(root, '.git'))) {
+    const entry = stepRuntimeEntry(root);
+    if (!fs.existsSync(entry)) return { note: '随包运行时缺失，退回落点' };
+    return { root, note: `随包运行时 ${origin.commit.slice(0, 8)}，要跟随官方请给它一份检出` };
   }
   const followed = followCleanCheckout(root);
-  const entry = path.join(root, 'packages', 'coding-agent', 'dist', 'index.js');
+  const entry = stepRuntimeEntry(root);
   if (!fs.existsSync(entry)) {
-    return { note: `${followed.note}；锁定包尚未构建，使用随包锁定点` };
+    return { note: `${followed.note}；运行时尚未构建，使用随包版本` };
   }
   return { root, note: followed.note };
 }

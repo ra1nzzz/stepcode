@@ -36,7 +36,7 @@ updated: 2026-10-01
 ## 打包形态
 
 1. 包内运行时是 esbuild 打好的单文件 `resources/step/index.js`，不是 `packages/*/dist` 的原样拷贝。2026-10-01 实测：原样拷贝里那 1044 个文件有 82 种裸导入（`@step-harness/*`、`chalk`、`typebox`、`undici`…），包里没有 node_modules 可解析，导入就在 `ERR_MODULE_NOT_FOUND: chalk` 上失败。
-2. 打不进去的外部依赖随包放在 `resources/step/node_modules`：`@silvia-odwyer/photon-node`、`jiti`。别的都是内建或已内联。
+2. 打不进去的两个依赖放在 `resources/step/runtime/`：`photon-node`（wasm）与 `jiti`（按需加载器），产物用相对路径引入。**不能叫 `node_modules`**：electron-builder 会把这个目录名滤掉，实测第一次打包只带走了 4 个文件，依赖整个没进包。两个包都没有自己的运行时依赖。
 3. 包内同时写 `step-origin.json` 与 `step-lock.json`，记下这次打包用的提交。
 4. 包内的没有 `.git`，不参与快进。要让它跟随官方，给它一份官方检出，用 `ORCHDESK_STEP_CODE` 或 `ORCHDESK_STEP_RUNTIME` 指过去。没有检出时用随包版本。
 5. 因此「一直随官方更新」分两种：源码场景启动即快进重建；分发给最终用户的打包场景随壳自己的 OTA 走，每个新 exe 带一份当次的官方修订。

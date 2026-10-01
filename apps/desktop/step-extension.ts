@@ -308,23 +308,43 @@ export async function loadStepRuntime(root: string, deps: StepLoadDeps = {}): Pr
   return loadLockedStepExtension(root, deps);
 }
 
+/**
+ * 运行时的入口文件。包内是 esbuild 打好的单文件 index.js，
+ * 检出里是编译出的 packages/coding-agent/dist/index.js。
+ */
+export function stepRuntimeEntry(root: string): string {
+  const bundled = path.join(root, 'index.js');
+  if (fs.existsSync(bundled)) return bundled;
+  return path.join(root, 'packages', 'coding-agent', 'dist', 'index.js');
+}
+
+/** 检出布局才有的身份文件。包内的身份由打包清单给出，不在这里读。 */
+function stepCheckoutIdentity(root: string): { name?: string; version?: string } | null {
+  const pkgPath = path.join(root, 'packages', 'coding-agent', 'package.json');
+  if (!fs.existsSync(pkgPath)) return null;
+  return JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { name?: string; version?: string };
+}
+
+async function importStepRuntime(entry: string, deps: StepLoadDeps, what: string): Promise<StepExtensionModule> {
+  const importer = deps.importModule ?? nativeImport;
+  const loaded = await importer(pathToFileURL(entry).href);
+  if (typeof loaded.createStepExtensionInline !== 'function') {
+    throw new Error(`${what}没有 createStepExtensionInline`);
+  }
+  return loaded;
+}
+
 async function loadOfficialStepRuntime(root: string, deps: StepLoadDeps): Promise<StepExtensionModule> {
   const version = deps.nodeVersion ?? process.versions.node;
   if (!nodeSatisfiesStepRuntime(version)) {
     throw new Error(`Node ${version} 低于 22.19.0，未加载官方运行时`);
   }
-  const entry = path.join(root, 'packages', 'coding-agent', 'dist', 'index.js');
+  const entry = stepRuntimeEntry(root);
   const exists = deps.entryExists ?? fs.existsSync;
   if (!exists(entry)) throw new Error('官方运行时尚未构建，未加载');
-  const pkgPath = path.join(root, 'packages', 'coding-agent', 'package.json');
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { name?: string };
-  if (pkg.name !== STEP_PACKAGE_NAME) throw new Error('官方运行时身份不符，未加载');
-  const importer = deps.importModule ?? nativeImport;
-  const loaded = await importer(pathToFileURL(entry).href);
-  if (typeof loaded.createStepExtensionInline !== 'function') {
-    throw new Error('官方运行时没有 createStepExtensionInline');
-  }
-  return loaded;
+  const identity = stepCheckoutIdentity(root);
+  if (identity && identity.name !== STEP_PACKAGE_NAME) throw new Error('官方运行时身份不符，未加载');
+  return importStepRuntime(entry, deps, '官方运行时');
 }
 
 export async function loadLockedStepExtension(root: string, deps: StepLoadDeps = {}): Promise<StepExtensionModule> {
@@ -336,20 +356,14 @@ export async function loadLockedStepExtension(root: string, deps: StepLoadDeps =
   if (lock.commit !== STEP_LOCK_COMMIT || lock.tree !== STEP_LOCK_TREE) {
     throw new Error('锁定点不符，未加载');
   }
-  const entry = path.join(root, 'packages', 'coding-agent', 'dist', 'index.js');
+  const entry = stepRuntimeEntry(root);
   const exists = deps.entryExists ?? fs.existsSync;
   if (!exists(entry)) throw new Error('锁定包尚未构建，未加载');
-  const pkgPath = path.join(root, 'packages', 'coding-agent', 'package.json');
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { name?: string; version?: string };
-  if (pkg.name !== STEP_PACKAGE_NAME || pkg.version !== STEP_PACKAGE_VERSION) {
+  const identity = stepCheckoutIdentity(root);
+  if (identity && (identity.name !== STEP_PACKAGE_NAME || identity.version !== STEP_PACKAGE_VERSION)) {
     throw new Error('锁定包身份不符，未加载');
   }
-  const importer = deps.importModule ?? nativeImport;
-  const loaded = await importer(pathToFileURL(entry).href);
-  if (typeof loaded.createStepExtensionInline !== 'function') {
-    throw new Error('锁定包没有 createStepExtensionInline');
-  }
-  return loaded;
+  return importStepRuntime(entry, deps, '锁定包');
 }
 
 // tsc 会把 import() 降成 require。锁定包是 ESM，必须保留原生动态导入。

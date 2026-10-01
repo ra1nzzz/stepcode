@@ -4,6 +4,7 @@ desktop.ini
 node_modules/
 dist/
 release/
+vendor/
 *.log
 .e2e*.txt
 .tmp-*
