@@ -892,8 +892,11 @@ table.tb td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align
 .home-note{margin-top:16px;color:var(--fg);font-size:15px;font-weight:600;text-align:center;line-height:1.5}
 .turn-strip{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:8px 12px;border-radius:10px;background:var(--ceo-soft);color:var(--fg)}
 .turn-strip.wait{background:var(--warn-soft)}
+.turn-strip.stop{background:var(--bg-inset)}
 .turn-label{font-size:12px;font-weight:700;color:var(--ceo-solid);flex:none}
 .turn-strip.wait .turn-label{color:var(--warn)}
+.turn-strip.stop .turn-label{color:var(--fg-dim)}
+.turn-outcome{font-size:12px;color:var(--fg-dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .turn-reason{font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .turn-progress{margin-left:auto;font-size:12px;color:var(--fg-dim);flex:none}
 .app.browser-mode .context{display:none}

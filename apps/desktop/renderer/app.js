@@ -268,6 +268,8 @@
     thinkExpanded: new Set(),
     /** 进行中的模型回合 sessionId；非空时 composer 显示「停止」。 */
     turnBusy: null,
+    /** 刚停止的回合。主区据此留一行落点，而不是忙态一清就什么都不剩。 */
+    turnStopped: null,
     // P1.3 任务监控自动浮出：ctxAutoOpened=本回合自动开过（仅此种情况才自动关）、
     // ctxAutoToggled=用户在本回合手动调过面板（尊重手动，不再自动管理）。
     ctxAutoOpened: false, ctxAutoToggled: false,
@@ -395,10 +397,11 @@
   state.viewMode = 'session';
 
   const $ = (s) => document.querySelector(s);
+  // 导航按用户要做的事命名，不按功能模块命名。id 不变，改了会断路由。
   const PAGES = [
-    { id: 'session', n: '会话', icon: 'conv' },
-    { id: 'plugins', n: '插件', icon: 'skills' },
-    { id: 'settings', n: '设置', icon: 'settings' }
+    { id: 'session', n: '开始', icon: 'conv' },
+    { id: 'plugins', n: '能力', icon: 'skills' },
+    { id: 'settings', n: '偏好', icon: 'settings' }
   ];
   const nowTime = () => new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 
@@ -922,15 +925,20 @@
     const live = Array.isArray(state.toolSteps[s.id]) ? state.toolSteps[s.id] : [];
     const running = state.turnBusy === s.id;
     const waiting = !!state.pendingConfirm;
-    if (!running && !waiting && !live.length) return '';
+    const stopped = state.turnStopped && state.turnStopped.id === s.id;
+    if (!running && !waiting && !stopped) return '';
     const done = live.filter((t) => t.ph === 'done').length;
     const current = [...live].reverse().find((t) => t.ph !== 'done') || live[live.length - 1];
-    const reason = current ? (current.n || '工具') : (waiting ? '有一个动作需要你确认' : '正在组织回复');
-    const label = waiting ? '等待确认' : (running ? '正在进行' : '这一回合');
+    // 步骤只有名字和结果，没有「为什么」。不编造原因，只把已有的两段显式标出来。
+    const doing = current ? (current.n || '工具') : (waiting ? '一个需要你确认的动作' : '组织回复');
+    const outcome = current && current.result ? String(current.result) : '';
+    const label = stopped ? '已停止' : (waiting ? '等待确认' : '正在进行');
+    const tone = stopped ? 'stop' : (waiting ? 'wait' : 'run');
     const progress = live.length ? `${done}/${live.length}` : '';
-    return `<div class="turn-strip ${waiting ? 'wait' : 'run'}" role="status">
+    return `<div class="turn-strip ${tone}" role="status">
       <span class="turn-label">${label}</span>
-      <span class="turn-reason">${esc(reason)}</span>
+      <span class="turn-reason">${stopped ? '这一回合已停止，可以修改后再发送' : '在做 ' + esc(doing)}</span>
+      ${!stopped && outcome ? `<span class="turn-outcome">${esc(outcome)}</span>` : ''}
       ${progress ? `<span class="turn-progress">${progress}</span>` : ''}
     </div>`;
   }
@@ -2832,6 +2840,7 @@
     if (!sid) return;
     // P2 演示模式没有主进程回合可停：直接清忙态，runDemoTurn 的循环守卫随即退出。
     if (state.demoMode) {
+      state.turnStopped = { id: sid, at: Date.now() };
       state.turnBusy = null;
       patchComposerSend(false);
       updateMsgList();
@@ -2934,6 +2943,7 @@
     // 动作」展示形态随即生效）。
     state.toolSteps[s.id] = [];
     state.turnBusy = s.id;
+    if (state.turnStopped && state.turnStopped.id === s.id) state.turnStopped = null;
     // P1.3：轻模式回合开始自动浮出任务监控（project 态常驻）。
     // 语义与 spec「回合中浮出 / 结束 5s 收起 / 用户可钉住」对齐：
     //   · ctxAutoOpened = 本回合由自动浮出打开 → 才参与结束 5s 后的自动收起；
@@ -2961,7 +2971,10 @@
       render(); // 回合结束刷新侧栏标题/待办；工具步骤过程中不走全页 render
       // typing 消息已被静态消息替换（tools 已随消息落库展示），live 轨迹不再需要
       delete state.toolSteps[s.id];
-      if (res && res.aborted) toast('已停止生成', 'warn');
+      if (res && res.aborted) {
+        state.turnStopped = { id: s.id, at: Date.now() };
+        toast('已停止生成', 'warn');
+      }
       else toast(`已入会话日志 · ${state.selectedModels.length} 模型 · 思维 ${thinkLabel(state.thinkLevel)}`, 'ok');
     } catch (err) {
       s.msgs[typingIdx] = { r: 'agent', t: nowTime(), x: '（模型回合失败：' + (err && err.message ? err.message : err) + '）' };
