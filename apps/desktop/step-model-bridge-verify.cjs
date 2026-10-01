@@ -97,9 +97,46 @@ async function main() {
     assert.deepStrictEqual(Object.keys(out.providers), ['my-openai']);
   });
 
+  await check('空模型 id 会被丢掉，不会让整份 models.json 校验失败', () => {
+    // 锁定包 schema 要求 id minLength 1；校验失败时静默丢掉整份配置，不是只丢这一条。
+    const cfg = {
+      providers: [openaiCompat({ models: ['', '  ', 'gpt-4o-mini'] })],
+    };
+    const models = b.toStepModelsJson(cfg).providers['my-openai'].models;
+    assert.deepStrictEqual(models, [{ id: 'gpt-4o-mini' }]);
+    assert.ok(models.every((m) => m.id.trim().length > 0), '不得写出空 id');
+  });
+
+  await check('模型 id 的首尾空白会被去掉（否则 GUI 选的模型对不上 Step 里的 id）', () => {
+    const cfg = {
+      providers: [openaiCompat({ models: ['  gpt-4o-mini  '] })],
+      defaultProvider: 'my-openai',
+      defaultModel: '  gpt-4o-mini  ',
+    };
+    assert.deepStrictEqual(b.toStepModelsJson(cfg).providers['my-openai'].models, [{ id: 'gpt-4o-mini' }]);
+    assert.deepStrictEqual(b.pickDefaultModel(cfg), { provider: 'my-openai', modelId: 'gpt-4o-mini' });
+  });
+
   await check('缺少 baseUrl 的条目不写（否则 Step 拿到空 baseUrl）', () => {
     const out = b.toStepModelsJson({ providers: [openaiCompat({ baseUrl: '' })] });
     assert.deepStrictEqual(Object.keys(out.providers), []);
+  });
+
+  await check('选中的模型一定在写出去的 models.json 里', () => {
+    // 默认提供商没有 baseUrl：它写不进文件，选它就会让会话去读一个不存在的提供商。
+    const cfg = {
+      providers: [
+        openaiCompat({ id: 'broken', baseUrl: '   ', models: ['x'] }),
+        openaiCompat(),
+      ],
+      defaultProvider: 'broken',
+      defaultModel: 'x',
+    };
+    const picked = b.pickDefaultModel(cfg);
+    assert.ok(picked, '应退回到下一个可用提供商');
+    assert.ok(b.toStepModelsJson(cfg).providers[picked.provider],
+      '选中的提供商必须真的被写进 models.json');
+    assert.equal(picked.provider, 'my-openai');
   });
 
   await check('默认模型优先取 GUI 指定的提供商', () => {

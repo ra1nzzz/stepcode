@@ -60,14 +60,29 @@ export function toStepBaseUrl(provider: GuiProvider): string {
   return base;
 }
 
-/** 只保留能用（有 id、有至少一个模型）的提供商，避免把空壳写进 Step 目录。 */
+/**
+ * 只保留 Step 真的能收下的提供商。
+ *
+ * 锁定包用 schema 校验整份 `models.json`（`model-config.ts` 的 `ModelDefinitionSchema`：
+ * `id` 的 minLength 为 1）。校验失败时不抛错，而是把整份配置静默换成空 Map——
+ * 一个空 id 就会让所有提供商一起消失，表现是「No API key found」，看不出是哪条坏了。
+ * 所以这里先丢掉空 id、空白模型名，以及没有 baseUrl 的条目（没地址的提供商写进去
+ * 也发不出请求）。
+ *
+ * `toStepModelsJson`、`toStepAuthJson`、`pickDefaultModel` 必须共用这一份过滤：
+ * 选中的模型如果不在写出去的文件里，会话会去读一个不存在的提供商。
+ */
 function usableProviders(cfg: GuiModelConfig): Array<GuiProvider & { id: string; models: string[] }> {
   const out: Array<GuiProvider & { id: string; models: string[] }> = [];
   for (const p of cfg.providers ?? []) {
-    if (!p || typeof p.id !== 'string' || !p.id) continue;
-    const models = (p.models ?? []).filter((m) => typeof m === 'string' && m.trim());
+    if (!p || typeof p.id !== 'string' || !p.id.trim()) continue;
+    if (!toStepBaseUrl(p)) continue;
+    const models = (p.models ?? [])
+      .filter((m) => typeof m === 'string')
+      .map((m) => m.trim())
+      .filter((m) => m.length > 0);
     if (models.length === 0) continue;
-    out.push({ ...p, id: p.id, models });
+    out.push({ ...p, id: p.id.trim(), models });
   }
   return out;
 }
@@ -75,11 +90,10 @@ function usableProviders(cfg: GuiModelConfig): Array<GuiProvider & { id: string;
 export function toStepModelsJson(cfg: GuiModelConfig): StepModelsJson {
   const providers: StepModelsJson['providers'] = {};
   for (const p of usableProviders(cfg)) {
-    const baseUrl = toStepBaseUrl(p);
-    if (!baseUrl) continue;
     providers[p.id] = {
-      baseUrl,
+      baseUrl: toStepBaseUrl(p),
       api: toStepApi(p),
+      // id 已在 usableProviders 里 trim 且非空，满足 Step schema 的 minLength: 1。
       models: p.models.map((id) => ({ id })),
     };
   }
@@ -89,6 +103,8 @@ export function toStepModelsJson(cfg: GuiModelConfig): StepModelsJson {
 export function toStepAuthJson(cfg: GuiModelConfig): StepAuthJson {
   const auth: StepAuthJson = {};
   for (const p of usableProviders(cfg)) {
+    // 锁定包把空 key 的 api_key 凭据当作没有凭据（auth-storage.ts），
+    // 写一条空 key 等于没写，还让文件看起来「有凭据」。
     const key = String(p.apiKey ?? '').trim();
     if (key) {
       auth[p.id] = { type: 'api_key', key };

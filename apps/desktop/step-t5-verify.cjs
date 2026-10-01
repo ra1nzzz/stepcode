@@ -27,6 +27,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const Module = require('node:module');
+const { pathToFileURL } = require('node:url');
 
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-'));
 process.env.ORCHDESK_HOME = HOME;
@@ -324,6 +325,16 @@ function hostFor(confirm, cwd, onDelta) {
       // 3) 用户在 step CLI 里配的凭据必须原封不动。
       assert.equal(fs.readFileSync(rt.cliAuthPath, 'utf-8'), rt.cliSentinel,
         '桥接不得改写 CLI 自己的 auth.json');
+
+      // 4) 锁定包自己必须能从这份文件里取出模型。只断言「我们写了文件」不够：
+      // schema 校验失败时 Step 静默丢掉整份配置，文件仍在，回合却报 No API key。
+      const locked = await import(pathToFileURL(path.join(root, 'packages', 'coding-agent', 'dist', 'index.js')).href);
+      const runtime = await locked.ModelRuntime.create({ authPath, modelsPath });
+      const model = runtime.getModel('localmock', 'probe-model');
+      assert.ok(model, 'Step 应从 gui/models.json 取出 probe-model；取不到说明 schema 被静默丢弃');
+      assert.equal(model.api, 'openai-completions');
+      assert.equal(runtime.hasConfiguredAuth('localmock'), true,
+        'Step 应从 gui/auth.json 认出这把 key');
     } finally {
       rt.close();
     }
