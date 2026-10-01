@@ -558,6 +558,24 @@ const stepSessionHost: StepSessionHost = {
   notifyAgentDelta,
   notifyToolStep,
   uiContext: () => buildStepUiContext(),
+  // GUI 模型页配的提供商 → Step 会话该用的模型。key 在这里用 safeStorage 解好，
+  // 明文只交给 step-model-bridge 投影，不进日志。
+  modelConfig: () => {
+    const cfg = loadModelConfig();
+    return {
+      providers: cfg.providers.map((p) => ({
+        id: p.id,
+        name: p.name,
+        type: p.type,
+        baseUrl: p.baseUrl,
+        apiMode: p.apiMode,
+        apiKey: decryptKey(p.apiKeyEnc),
+        models: p.models,
+      })),
+      defaultProvider: cfg.defaultProvider,
+      defaultModel: cfg.defaultModel,
+    };
+  },
   // bootRuntime 已经解析过一次锁定点；这里取缓存值，避免首次发送再同
   // 步跑一遍 git checkout 探测（Electron 主进程同步阻塞整个 UI）。
   root: () => stepCheckoutRoot ?? resolveStepCheckout(),

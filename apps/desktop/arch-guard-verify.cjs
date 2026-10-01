@@ -61,6 +61,10 @@ const PURE_MODULES = [
   'memory-promotion.ts', 'memory-summarize.ts', 'plugin-market.ts',
   'mcp-client.ts', 'connector-discover.ts',
   'sandbox-log.ts', 'session-events.ts', 'terminal-tools.ts', 'usage-registry.ts',
+  // 这两个带副作用（会话要落盘），但满足本白名单的判据：零 electron 依赖、可 node
+  // 直测（step-t5-verify.cjs 就是 require dist/step-session.js 直接驱动的）。
+  // 列进来是为了让 R2/R3/R5 真能扫到它们，而不是放任它们落在规则之外。
+  'step-session.ts', 'step-model-bridge.ts',
 ];
 function pureFiles() {
   return PURE_MODULES.map((f) => ({ name: f, abs: path.join(APP_DIR, f) }));
@@ -341,12 +345,43 @@ function scanRule(rule, code, fileName) {
     assert(sliderMatch, 'renderer app.js 未找到 max-iter-pick 滑块');
     assert(Number(sliderMatch[1]) === cap, `渲染层滑块 max=${sliderMatch[1]} 与 MAX_TOOL_ITERATIONS_CAP=${cap} 不一致`);
 
-    // 钳制点必须引用常量而非裸数字。
-    for (const f of ['main.ts', 'step-session.ts']) {
-      const src = stripComments(read(path.join(APP_DIR, f)));
-      const stray = src.match(/Math\.min\(\s*\d{3}\s*,\s*incoming\.maxToolIterations|Math\.min\(\s*\d{3}\s*,\s*modelCfg\.maxToolIterations/g);
-      assert(!stray, `${f} 存在裸数字钳制（应引用 MAX_TOOL_ITERATIONS_CAP）：${stray && stray.join(', ')}`);
+    // 上限值在所有出现处必须单源：渲染层滑块 max、渲染层保存时的钳制字面量、
+    // 主进程钳制点。
+    //
+    // 这里先「找出来再断言」而不是逐个文件断言「没有裸数字」：后者是负向规则，
+    // 钳制点被搬走、改名或删掉时会静默空转（扫的文件里根本没有 maxToolIterations）。
+    const sliderClampRe = /Math\.min\(\s*(\d+)\s*,\s*parseInt\(e\.target\.value\)/g;
+    const renderedLiteral = [];
+    for (const [i, line] of appSrc.split(/\r?\n/).entries()) {
+      if (!line.includes('maxToolIterations')) continue;
+      let sm;
+      sliderClampRe.lastIndex = 0;
+      while ((sm = sliderClampRe.exec(line))) {
+        renderedLiteral.push({ line: i + 1, value: Number(sm[1]) });
+      }
     }
+    assert(renderedLiteral.length > 0,
+      'renderer app.js 里没找到 maxToolIterations 的钳制字面量（规则会空转）；若确已删除，请同步本规则');
+    const driftedRender = renderedLiteral.filter((r) => r.value !== cap);
+    assert(driftedRender.length === 0,
+      `渲染层钳制字面量与 MAX_TOOL_ITERATIONS_CAP=${cap} 不一致：` +
+      driftedRender.map((r) => `app.js:${r.line}=${r.value}`).join(', '));
+
+    const clampRe = /Math\.min\(\s*([^,()]+?)\s*,\s*([^()]*maxToolIterations[^()]*?)\s*\)/g;
+    const sites = [];
+    for (const abs of desktopTsFiles()) {
+      const rel = path.relative(APP_DIR, abs).replace(/\\/g, '/');
+      const src = stripComments(read(abs));
+      clampRe.lastIndex = 0;
+      let m;
+      while ((m = clampRe.exec(src))) sites.push({ file: rel, cap: m[1].trim() });
+    }
+    assert(sites.length > 0,
+      '没找到 maxToolIterations 的主进程钳制点（规则会空转）；若确已删除钳制，请同步本规则与 MAX_TOOL_ITERATIONS_CAP');
+    const bare = sites.filter((s) => s.cap !== 'MAX_TOOL_ITERATIONS_CAP');
+    assert(bare.length === 0,
+      '钳制点用了裸数字而非 MAX_TOOL_ITERATIONS_CAP：' +
+      bare.map((s) => `${s.file}(${s.cap})`).join(', '));
   });
 
   /* ---------------- R11：SHELL_METACHARS 双份定义一致（跨构建边界的正则副本） ---------------- */

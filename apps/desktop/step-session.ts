@@ -21,6 +21,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { resolveStepCheckout, type ComposedStepExtension, type StepPreset } from './step-extension';
+import {
+  configFingerprint,
+  pickDefaultModel,
+  toStepAuthJson,
+  toStepModelsJson,
+  type GuiModelConfig,
+} from './step-model-bridge';
 
 export type StepTurnResult = {
   text: string;
@@ -37,6 +44,16 @@ type LockedModule = {
   DefaultResourceLoader: new (options: Record<string, unknown>) => StepResourceLoaderLike;
   /** Step 运行时自己的 agent 根（凭据 models.json / auth.json 的所在）。 */
   resolveStepAgentDir: (env?: Record<string, string | undefined>) => string;
+  /** Step 运行时自己的存储根（本 GUI 的模型凭据写在它的 gui/ 子目录）。 */
+  resolveStepStorageRoot: (env?: Record<string, string | undefined>) => string;
+  /** 锁定包的模型运行时。自建实例才能把凭据指到本 GUI 的目录。 */
+  ModelRuntime: {
+    create: (options: { authPath?: string; modelsPath?: string }) => Promise<StepModelRuntimeLike>;
+  };
+};
+
+type StepModelRuntimeLike = {
+  getModel: (provider: string, modelId: string) => unknown;
 };
 
 type StepSessionLike = {
@@ -109,6 +126,11 @@ export type StepSessionHost = {
   notifyToolStep: (sessionId: string, name: string, ph: 'running' | 'done' | 'error', result?: string) => void;
   /** 界面上下文：确认走本 GUI 弹窗，其余方法在主进程里都是空操作。 */
   uiContext: () => StepUiContext;
+  /**
+   * GUI 模型页的配置，key 已由宿主解密。会话靠它把用户在本 GUI 配的提供商
+   * 投影成 Step 认的形状；不回这个，就永远只能用环境里碰巧存在的凭据。
+   */
+  modelConfig: () => GuiModelConfig;
   /** 锁定点根目录。 */
   root: () => string;
 };
@@ -121,12 +143,14 @@ const nativeImport = new Function('specifier', 'return import(specifier)') as (
 let stepRoot: string | null = null;
 let lockedModule: LockedModule | null = null;
 /**
- * 会话缓存。键是「GUI 会话 id + 该会话绑定的工作目录」：
+ * 会话缓存。键是「GUI 会话 id + 该会话绑定的工作目录 + 模型配置指纹」：
  *   · 同一条 GUI 会话复用同一条 Step 会话，历史留在 Step 自己的存储根；
-   *   · 换会话不会读到别人的历史；
-   *   · 工作目录变了（用户重新绑定项目）才重建。
+ *   · 换会话不会读到别人的历史；
+ *   · 工作目录变了（用户重新绑定项目）才重建；
+ *   · 模型配置变了（用户在设置页换提供商 / 换 key）也重建——不重建的话下个
+ *     回合仍会用旧凭据发请求，就是「设置页对回合没有影响」那个 bug。
  */
-type CachedSession = { sid: string; cwd: string; session: StepSessionLike };
+type CachedSession = { sid: string; cwd: string; configFp: string; session: StepSessionLike };
 let cachedSession: CachedSession | null = null;
 const turnAborts = new Map<string, AbortController>();
 
@@ -159,20 +183,25 @@ async function resolveLockedModule(root: () => string): Promise<LockedModule> {
 
 /**
  * 取一个已挂上本 GUI Step 扩展的会话，按 GUI 会话缓存。
- * 历史与凭据都落在 Step 运行时自己的存储根（ADR 0005 第 5 条）——
+ * 会话历史落在 Step 运行时自己的存储根（ADR 0005 第 5 条）——
  * agentDir 不传会崩（DefaultResourceLoader 的 options.agentDir 是必填），
- * 也不能拿 OrchDesk 的 dataDir 顶替：那会把会话和凭据搬进本 GUI 的目录。
+ * 也不能拿 OrchDesk 的 dataDir 顶替：那会把会话搬进本 GUI 的目录。
  */
 async function ensureSession(host: StepSessionHost, sid: string): Promise<StepSessionLike> {
   const composed = host.composed();
   if (!composed) throw new Error('进程内组合未接上，未加载');
   const cwd = path.resolve(host.sessionCwd(sid));
-  if (cachedSession && cachedSession.sid === sid && cachedSession.cwd === cwd) {
+  const modelConfig = host.modelConfig();
+  const configFp = configFingerprint(modelConfig);
+  if (cachedSession && cachedSession.sid === sid && cachedSession.cwd === cwd && cachedSession.configFp === configFp) {
     return cachedSession.session;
   }
 
   const locked = await resolveLockedModule(host.root);
   const agentDir = locked.resolveStepAgentDir();
+  // 本 GUI 配的提供商投影成 Step 原生格式，写进 Step 存储根下的 gui/ 子目录：
+  // 凭据仍在 Step 的存储根内，但不碰用户在 step CLI 里配的 `<agentDir>/auth.json`。
+  const modelRuntime = await writeGuiModelRuntime(locked, modelConfig);
   const loader = new locked.DefaultResourceLoader({
     cwd,
     agentDir,
@@ -184,17 +213,47 @@ async function ensureSession(host: StepSessionHost, sid: string): Promise<StepSe
     noContextFiles: true,
   });
   await loader.reload();
+  const picked = pickDefaultModel(modelConfig);
+  const model = picked ? modelRuntime.getModel(picked.provider, picked.modelId) : undefined;
   const created = await locked.createStepAgentSession({
     cwd,
     agentDir,
     resourceLoader: loader,
+    // 把本 GUI 自己的模型目录/凭据交给会话；不传就是「设置页对回合没有影响」。
+    modelRuntime,
+    ...(model ? { model } : {}),
   });
   const session = created.session;
   await session.bindExtensions({ uiContext: host.uiContext() });
   // 换键前先销毁旧会话，否则每条 GUI 会话各留一套 agent + loader 不释放。
   if (cachedSession) disposeCached();
-  cachedSession = { sid, cwd, session };
+  cachedSession = { sid, cwd, configFp, session };
   return session;
+}
+
+/**
+ * 把 GUI 模型页的配置写成 Step 原生 `models.json` / `auth.json`，返回指向它们的
+ * 模型运行时。文件落在 `<Step 存储根>/gui/`（不碰 CLI 自己的 agent 目录）。
+ *
+ * 每次都重写：模型页是用户改了就期望下回合生效的地方，缓存文件反而会让人困惑。
+ */
+async function writeGuiModelRuntime(locked: LockedModule, cfg: GuiModelConfig): Promise<StepModelRuntimeLike> {
+  const dir = path.join(locked.resolveStepStorageRoot(), 'gui');
+  const modelsPath = path.join(dir, 'models.json');
+  const authPath = path.join(dir, 'auth.json');
+  const models = JSON.stringify(toStepModelsJson(cfg), null, 2);
+  const auth = JSON.stringify(toStepAuthJson(cfg), null, 2);
+  // 内容没变就不落盘：避免每次发送都重写凭据文件（也是给安全审计留干净的时间戳）。
+  if (readIfExists(modelsPath) !== models || readIfExists(authPath) !== auth) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(modelsPath, models, 'utf-8');
+    fs.writeFileSync(authPath, auth, 'utf-8');
+  }
+  return locked.ModelRuntime.create({ authPath, modelsPath });
+}
+
+function readIfExists(file: string): string | null {
+  try { return fs.readFileSync(file, 'utf-8'); } catch { return null; }
 }
 
 function disposeCached(): void {

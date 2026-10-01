@@ -143,11 +143,17 @@ const SSE_BODY = (() => {
 })();
 
 /**
- * 起一个本地假 OpenAI 端点，并把模型目录与凭据写进一个临时 Step agent 根。
- * 这样回合能真的打到模型层——而不是在「没配模型」时提前返回、让断言变成空转。
- * 凭据与模型目录都落在临时根里，不碰用户真的 ~/.stepcode。
+ * 起一个本地假 OpenAI 端点，并把「GUI 模型页的配置」交给会话。
+ *
+ * 关键区别：本函数不再直接写 Step 格式的 auth.json / models.json——那样等于把
+ * 投影逻辑抽掉，套件会绿而生产桥接坏了也看不出来。这里只给 GUI 侧形状的配置
+ * （带明文 key），落盘由 step-session → step-model-bridge 自己完成，套件再去验
+ * 落到了哪、写成什么形状。
+ *
+ * 存储根与 agent 根都指向临时目录，不碰用户真的 ~/.stepcode。
  */
 async function startFakeProvider() {
+  const storageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-storage-'));
   const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-stepagent-'));
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-turncwd-'));
   const hits = [];
@@ -155,47 +161,62 @@ async function startFakeProvider() {
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
-      hits.push({ url: req.url, body });
+      hits.push({ url: req.url, body, auth: req.headers.authorization || '' });
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.end(SSE_BODY);
     });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
-  // 凭据与模型目录都写进临时根；用锁定包读的形状（agents 读 auth.json，models 读 models.json）。
-  fs.writeFileSync(path.join(agentDir, 'auth.json'), JSON.stringify({
-    localmock: { type: 'api_key', key: 'probe-key' },
-  }));
-  fs.writeFileSync(path.join(agentDir, 'models.json'), JSON.stringify({
-    providers: {
-      localmock: {
-        baseUrl: `http://127.0.0.1:${port}/v1`,
-        api: 'openai-completions',
-        apiKey: 'probe-key',
-        models: [{ id: 'probe-model', name: 'Probe Model', input: ['text'] }],
-      },
-    },
-  }));
-  // 告诉锁定包用这个临时根；测完还原，别影响同进程里别的套件。
-  const prevAgentDir = process.env.STEP_CODING_AGENT_DIR;
-  const prevAuth = process.env.STEPCODE_AUTH_PATH;
+
+  // 哨兵：用户在 step CLI 里配的凭据。桥接不得动它。
+  const cliAuthPath = path.join(agentDir, 'auth.json');
+  const CLI_SENTINEL = JSON.stringify({ 'cli-only-provider': { type: 'api_key', key: 'cli-sentinel' } });
+  fs.writeFileSync(cliAuthPath, CLI_SENTINEL);
+
+  const prev = {
+    agentDir: process.env.STEP_CODING_AGENT_DIR,
+    storage: process.env.STEPCODE_STORAGE_ROOT_DIR,
+  };
+  // 重定向 Step 的两个根：不重定向就会写进用户真实的 ~/.stepcode/gui。
   process.env.STEP_CODING_AGENT_DIR = agentDir;
-  process.env.STEPCODE_AUTH_PATH = path.join(agentDir, 'auth.json');
-  return {
+  process.env.STEPCODE_STORAGE_ROOT_DIR = storageRoot;
+
+  const rt = {
     agentDir,
+    storageRoot,
     cwd,
     hits,
+    cliAuthPath,
+    cliSentinel: CLI_SENTINEL,
+    /** GUI 侧形状（renderer 的 saveModelConfig 入参 + 已解密的 key）。 */
+    modelConfig: {
+      providers: [{
+        id: 'localmock', name: '本地 Mock', type: 'openai-compatible', apiMode: 'chat',
+        baseUrl: `http://127.0.0.1:${port}/v1`, apiKey: 'probe-key', models: ['probe-model'],
+      }],
+      defaultProvider: 'localmock',
+      defaultModel: 'probe-model',
+    },
+    guiDir: () => path.join(storageRoot, 'gui'),
     close() {
+      if (activeProvider === rt) activeProvider = null;
       server.close();
-      if (prevAgentDir === undefined) delete process.env.STEP_CODING_AGENT_DIR;
-      else process.env.STEP_CODING_AGENT_DIR = prevAgentDir;
-      if (prevAuth === undefined) delete process.env.STEPCODE_AUTH_PATH;
-      else process.env.STEPCODE_AUTH_PATH = prevAuth;
+      if (prev.agentDir === undefined) delete process.env.STEP_CODING_AGENT_DIR;
+      else process.env.STEP_CODING_AGENT_DIR = prev.agentDir;
+      if (prev.storage === undefined) delete process.env.STEPCODE_STORAGE_ROOT_DIR;
+      else process.env.STEPCODE_STORAGE_ROOT_DIR = prev.storage;
+      fs.rmSync(storageRoot, { recursive: true, force: true });
       fs.rmSync(agentDir, { recursive: true, force: true });
       fs.rmSync(cwd, { recursive: true, force: true });
     },
   };
+  activeProvider = rt;
+  return rt;
 }
+
+/** 当前用例的假端点；未起时给一份空配置（会话不碰模型）。 */
+let activeProvider = null;
 
 function hostFor(confirm, cwd, onDelta) {
   return {
@@ -205,6 +226,7 @@ function hostFor(confirm, cwd, onDelta) {
     notifyAgentDelta: (_sid, text) => { if (onDelta) onDelta(text); },
     notifyToolStep: () => {},
     uiContext: () => buildUiContext(confirm),
+    modelConfig: () => (activeProvider ? activeProvider.modelConfig : { providers: [] }),
     root: () => root,
   };
 }
@@ -270,6 +292,72 @@ function hostFor(confirm, cwd, onDelta) {
       assert.equal(rt.hits.length, 1, '只应发一次模型请求');
       assert.ok(rt.hits[0].url.startsWith('/v1/chat/completions'),
         '模型请求应由锁定包自己发起，不经旧 OpenAI 循环');
+      // 证明这回合真的用了「GUI 设置页里那把 key」，而不是环境里碰巧别的凭据。
+      assert.equal(rt.hits[0].auth, 'Bearer probe-key',
+        '请求应带 GUI 模型页里配的 key，实际 ' + rt.hits[0].auth);
+    } finally {
+      rt.close();
+    }
+  });
+
+  await check('GUI 模型配置经桥接落到 Step 存储根，且不动 CLI 自己的凭据', async () => {
+    const rt = await startFakeProvider();
+    try {
+      await t5.runStepSessionTurn('s-bridge', '随便说点什么', hostFor(async () => false, rt.cwd));
+
+      // 1) 投影产物必须真的存在于 Step 存储根下的 gui/ 子目录。
+      const modelsPath = path.join(rt.guiDir(), 'models.json');
+      const authPath = path.join(rt.guiDir(), 'auth.json');
+      assert.ok(fs.existsSync(modelsPath), 'Step 存储根下应出现 gui/models.json');
+      assert.ok(fs.existsSync(authPath), 'Step 存储根下应出现 gui/auth.json');
+
+      // 2) 形状必须是 Step 认的那种（providers 是对象、凭据在 auth.json）。
+      const models = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
+      assert.equal(Array.isArray(models.providers), false, 'providers 必须是对象而非数组');
+      assert.equal(models.providers.localmock.api, 'openai-completions');
+      assert.deepStrictEqual(models.providers.localmock.models, [{ id: 'probe-model' }]);
+      const auth = JSON.parse(fs.readFileSync(authPath, 'utf-8'));
+      assert.deepStrictEqual(auth.localmock, { type: 'api_key', key: 'probe-key' });
+      assert.equal(JSON.stringify(models).includes('probe-key'), false,
+        'models.json 不应出现明文 key');
+
+      // 3) 用户在 step CLI 里配的凭据必须原封不动。
+      assert.equal(fs.readFileSync(rt.cliAuthPath, 'utf-8'), rt.cliSentinel,
+        '桥接不得改写 CLI 自己的 auth.json');
+    } finally {
+      rt.close();
+    }
+  });
+
+  await check('改模型配置后下个回合用新提供商（不会闷用缓存的旧凭据）', async () => {
+    const rt = await startFakeProvider();
+    try {
+      await t5.runStepSessionTurn('s-swap', '第一回合', hostFor(async () => false, rt.cwd));
+      assert.equal(rt.hits.length, 1);
+
+      // 用户在设置页换了 key：会话缓存必须失效，否则下一回合仍用旧凭据。
+      rt.modelConfig.providers[0].apiKey = 'rotated-key';
+      await t5.runStepSessionTurn('s-swap', '第二回合', hostFor(async () => false, rt.cwd));
+      assert.equal(rt.hits.length, 2, '换配置后应再来一次请求');
+      assert.equal(rt.hits[1].auth, 'Bearer rotated-key',
+        '第二回合应用新 key，实际 ' + rt.hits[1].auth);
+      const auth = JSON.parse(fs.readFileSync(path.join(rt.guiDir(), 'auth.json'), 'utf-8'));
+      assert.equal(auth.localmock.key, 'rotated-key', 'gui/auth.json 应已跟上新 key');
+    } finally {
+      rt.close();
+    }
+  });
+
+  await check('没配任何可用提供商时，回合给出可读失败而不是静默', async () => {
+    const rt = await startFakeProvider();
+    try {
+      rt.modelConfig.providers = [];
+      t5.resetStepSessionCache();
+      await assert.rejects(
+        () => t5.runStepSessionTurn('s-empty', '有人吗', hostFor(async () => false, rt.cwd)),
+        /No API key found|No model selected|selected model/i,
+      );
+      assert.equal(rt.hits.length, 0, '没配提供商时不应发出模型请求');
     } finally {
       rt.close();
     }
