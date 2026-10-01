@@ -20,7 +20,7 @@ import { pathToFileURL } from 'node:url';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { loadLockedStepExtension, resolveStepCheckout, type StepPreset } from './step-extension';
+import { resolveStepCheckout, type ComposedStepExtension, type StepPreset } from './step-extension';
 
 export type StepTurnResult = {
   text: string;
@@ -35,6 +35,8 @@ type LockedModule = {
     session: StepSessionLike;
   }>;
   DefaultResourceLoader: new (options: Record<string, unknown>) => StepResourceLoaderLike;
+  /** Step 运行时自己的 agent 根（凭据 models.json / auth.json 的所在）。 */
+  resolveStepAgentDir: (env?: Record<string, string | undefined>) => string;
 };
 
 type StepSessionLike = {
@@ -43,7 +45,8 @@ type StepSessionLike = {
   prompt: (text: string) => Promise<void>;
   abort: () => Promise<void>;
   dispose: () => void;
-  messages?: unknown[];
+  /** 会话的全部消息；最后一条 assistant 的文本即回合回复。 */
+  messages?: Array<{ role?: unknown; content?: unknown } | null> | unknown[];
 };
 
 type StepResourceLoaderLike = {
@@ -87,10 +90,18 @@ type StepSessionEvent = {
 };
 
 export type StepSessionHost = {
-  extension: () => unknown;
+  /**
+   * 已接上的组合（preset + 扩展本体 + confirm）。交整个组合对象，扩展字段由
+   * 本模块取——调用方解包到哪一层是历史歧义的来源。
+   */
+  composed: () => ComposedStepExtension | undefined;
   /** 当前预设。权限值只有 bypass / autopilot。 */
   preset: () => StepPreset;
-  /** 会话工作目录。 */
+  /**
+   * 会话工作目录。必须收 sessionId：GUI 的每条侧栏会话可以各自绑定项目目录
+   * （orchdesk:set-session-cwd → setSessionCwd），收了才会按目录取，不收就
+   * 永远落到全局默认目录，用户绑的目录被静默忽略。
+   */
   sessionCwd: (sessionId?: string) => string;
   /** 增量文本（沿用 orchdesk:agent-delta 通道）。 */
   notifyAgentDelta: (sessionId: string, text: string) => void;
@@ -109,19 +120,29 @@ const nativeImport = new Function('specifier', 'return import(specifier)') as (
 
 let stepRoot: string | null = null;
 let lockedModule: LockedModule | null = null;
-let cachedSession: { cwd: string; session: StepSessionLike; unsubscribe: () => void } | null = null;
+/**
+ * 会话缓存。键是「GUI 会话 id + 该会话绑定的工作目录」：
+ *   · 同一条 GUI 会话复用同一条 Step 会话，历史留在 Step 自己的存储根；
+   *   · 换会话不会读到别人的历史；
+   *   · 工作目录变了（用户重新绑定项目）才重建。
+ */
+type CachedSession = { sid: string; cwd: string; session: StepSessionLike };
+let cachedSession: CachedSession | null = null;
 const turnAborts = new Map<string, AbortController>();
 
+/** 与缓存键同形的激活标记：回合正在进行的那条会话。 */
 export function hasActiveStepTurn(sessionId: string): boolean {
   return turnAborts.has(String(sessionId || ''));
 }
 
 export function abortStepSession(sessionId: string): { ok: boolean; reason?: string } {
-  const cur = turnAborts.get(String(sessionId || ''));
+  const sid = String(sessionId || '');
+  const cur = turnAborts.get(sid);
   if (!cur) return { ok: false, reason: 'no-active-turn' };
   cur.abort();
-  // 只有中止控制器不够：会话说 agent.abort()，否则 prompt() 仍要等模型跑完。
-  if (cachedSession) void cachedSession.session.abort().catch(() => {});
+  // 只有中止控制器不够：还会说仍在等模型，必须让会话说 agent.abort()。
+  const target = cachedSession && cachedSession.sid === sid ? cachedSession.session : null;
+  if (target) void target.abort().catch(() => {});
   return { ok: true };
 }
 
@@ -137,20 +158,25 @@ async function resolveLockedModule(root: () => string): Promise<LockedModule> {
 }
 
 /**
- * 取一个已挂上本 GUI Step 扩展的会话。
- * 会话按工作目录缓存：同一目录复用同一条会话，历史留在 Step 自己的存储根。
+ * 取一个已挂上本 GUI Step 扩展的会话，按 GUI 会话缓存。
+ * 历史与凭据都落在 Step 运行时自己的存储根（ADR 0005 第 5 条）——
+ * agentDir 不传会崩（DefaultResourceLoader 的 options.agentDir 是必填），
+ * 也不能拿 OrchDesk 的 dataDir 顶替：那会把会话和凭据搬进本 GUI 的目录。
  */
-async function ensureSession(host: StepSessionHost): Promise<StepSessionLike> {
-  const wired = host.extension();
-  if (!wired) throw new Error('进程内组合未接上，未加载');
-  const cwd = path.resolve(host.sessionCwd());
-  if (cachedSession && cachedSession.cwd === cwd) return cachedSession.session;
+async function ensureSession(host: StepSessionHost, sid: string): Promise<StepSessionLike> {
+  const composed = host.composed();
+  if (!composed) throw new Error('进程内组合未接上，未加载');
+  const cwd = path.resolve(host.sessionCwd(sid));
+  if (cachedSession && cachedSession.sid === sid && cachedSession.cwd === cwd) {
+    return cachedSession.session;
+  }
 
   const locked = await resolveLockedModule(host.root);
-  const ext = wired as { extension: unknown };
+  const agentDir = locked.resolveStepAgentDir();
   const loader = new locked.DefaultResourceLoader({
     cwd,
-    extensionFactories: [ext.extension],
+    agentDir,
+    extensionFactories: [composed.extension],
     // 本 GUI 自己管 skills / 主题 / 上下文文件；加载器只负责把组合好的扩展交给会话。
     noSkills: true,
     noPromptTemplates: true,
@@ -160,21 +186,27 @@ async function ensureSession(host: StepSessionHost): Promise<StepSessionLike> {
   await loader.reload();
   const created = await locked.createStepAgentSession({
     cwd,
+    agentDir,
     resourceLoader: loader,
   });
   const session = created.session;
   await session.bindExtensions({ uiContext: host.uiContext() });
-  cachedSession = { cwd, session, unsubscribe: () => {} };
+  // 换键前先销毁旧会话，否则每条 GUI 会话各留一套 agent + loader 不释放。
+  if (cachedSession) disposeCached();
+  cachedSession = { sid, cwd, session };
   return session;
+}
+
+function disposeCached(): void {
+  if (!cachedSession) return;
+  const dead = cachedSession;
+  cachedSession = null;
+  try { dead.session.dispose(); } catch { /* 已销毁 */ }
 }
 
 /** 丢开会话缓存（模式切换、锁定点重新组合后调用）。 */
 export function resetStepSessionCache(): void {
-  if (cachedSession) {
-    cachedSession.unsubscribe();
-    try { cachedSession.session.dispose(); } catch { /* 已销毁 */ }
-  }
-  cachedSession = null;
+  disposeCached();
 }
 
 function collectText(message: unknown): string {
@@ -205,9 +237,8 @@ export async function runStepSessionTurn(
   host: StepSessionHost,
 ): Promise<StepTurnResult> {
   const sid = String(sessionId || '');
-  const session = await ensureSession(host);
-  const toolSteps: StepTurnResult['tools'] = [];
-  let aborted = false;
+  const session = await ensureSession(host, sid);
+  const toolSteps: NonNullable<StepTurnResult['tools']> = [];
   const ac = new AbortController();
   const prev = turnAborts.get(sid);
   if (prev) prev.abort();
@@ -249,17 +280,22 @@ export async function runStepSessionTurn(
   try {
     if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError');
     await session.prompt(text);
+    // 用户按停止时 agent 循环是正常收尾的（stopReason: aborted → turn_end/agent_end
+    // 后 return），prompt() 走 resolve 不走 reject。所以只靠 catch 认不出停止，
+    // 必须在解析后再看一次中止位，否则界面把停止报成成功。
+    if (ac.signal.aborted) return stoppedResult(toolSteps);
     return { text: lastAssistantText(session), intent: 'ACT', tools: toolSteps, steps: toolSteps.length };
   } catch (err) {
-    if (ac.signal.aborted || (err as Error)?.name === 'AbortError') {
-      aborted = true;
-      return { text: '（已停止）', intent: 'CONFIRM', aborted: true, tools: toolSteps, steps: toolSteps.length };
-    }
+    if (ac.signal.aborted || (err as Error)?.name === 'AbortError') return stoppedResult(toolSteps);
     throw err;
   } finally {
     unsubscribe();
     if (turnAborts.get(sid) === ac) turnAborts.delete(sid);
   }
+}
+
+function stoppedResult(toolSteps: NonNullable<StepTurnResult['tools']>): StepTurnResult {
+  return { text: '（已停止）', intent: 'CONFIRM', aborted: true, tools: toolSteps, steps: toolSteps.length };
 }
 
 /**
@@ -274,3 +310,4 @@ function lastAssistantText(session: StepSessionLike): string {
   }
   return '';
 }
+

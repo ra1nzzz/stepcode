@@ -9,7 +9,7 @@
  *   - 两侧都有：元数据取 incoming（title/pid 是 UI 操作），msgs 按去重键合并，
  *     stored 条目在冲突时优先（agent 回合产物不被旧快照回退）
  *   - incoming 缺失且 store 存在：视为用户删除——调用方（main.ts）需确认该会话
- *     没有进行中的 agent 回合才可删（见 persistSessions 的 hasActiveTurn 参数）
+ *     没有进行中的 Step 回合才可删（见 persistSessions 的 isActive 参数）
  *
  * 纯逻辑：不依赖 electron / fs，可 node 直测。
  */

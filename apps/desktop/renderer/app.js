@@ -5,7 +5,7 @@
  * 或需要真实模型的操作经 window.orchdesk 桥（contextBridge）调用主进程：
  *   - loadSessions()      启动时拉取持久化会话（空则首次运行，用种子数据）
  *   - persistSessions(arr) 任何变更后落盘（主进程写 userData JSON，可重启回放）
- *   - runAgentTurn(...)    模型回合 seam：主进程在此接真实 dsh ctx / Ollama
+ *   - runAgentTurn(...)    模型回合 seam：主进程在此接 Step 会话（step-session.ts）
  * 红线（ADR-0002）：渲染进程绝不 require node / dsh 模块，一律经桥。
  * 若桥不存在（直接用浏览器打开 index.html 预览），自动回落到页内内存存储。
  * ========================================================================== */

@@ -1,19 +1,22 @@
 /**
  * T5：用户会话接上 Step。
  *
- * 核对的是「作曲栏发送的文本由 Step 会话执行」这条接线本身，不重造一轮模型对话：
+ * 核对的是「作曲栏发送的文本由 Step 会话执行」这条接线本身，并且要让回合
+ * 真的打到模型层：用一个本地假提供端把用户消息发出去、把模型回复取回来。
+ * 没有这一条，其余断言都可能在「没配模型提前返回」上变成空转。
  *
  *   1. run-agent-turn 这个 IPC 通道由 step-session.ts 驱动，主进程真的把宿主交出去
  *   2. 驱动入口 runStepSessionTurn 拒绝在组合未接上时放行（fail-closed）
- *   3. 会话由锁定点的 DefaultResourceLoader + createStepAgentSession 交出，
- *      且挂上的是本 GUI 已组合的扩展（带 confirm 的那个）
- *   4. 会话路径不发模型 HTTP（OpenAI 循环已删，fetch 计数必须为 0）
- *   5. 权限值仍只有 bypass / autopilot，界面仍只有两档
- *   6. 危险命令确认仍走本 GUI 的 confirm（通道 orchdesk:authz-approval-request）
- *   7. 会话存储与模型凭据留在 Step 运行时自己的存储根
+ *   3. 真实回合：发出去的消息变成一次模型请求，回复落到旧契约形状
+ *   4. 同一条 GUI 会话复用历史；换会话不带别人的历史
+ *   5. 会话与凭据落在 Step 自己的存储根，OrchDesk 数据目录不落文件
+ *   6. 会话按绑定的工作目录取，不会静默落到用户主目录
+ *   7. 权限值仍只有 bypass / autopilot，界面仍只有两档
+ *   8. 危险命令确认仍走本 GUI 的 confirm（通道 orchdesk:authz-approval-request）
  *
- * 手法：stub electron + require dist/main.js，捕获 ipcMain handler 驱动
- * ipcMain handler 直接驱动。
+ * 手法：stub electron + require dist/main.js，捕获 ipcMain handler 驱动。
+ * 假提供端起在 127.0.0.1 随机端口，模型目录与凭据写在临时 Step agent 根里，
+ * 不碰用户真的 ~/.stepcode。
  *
  * 锁定包 dist/index.js 的 ESM 顶层副作用会留下常驻句柄，导入后不自行
  * process.exit 就永远不会退出（表现为挂起而非失败）。核对完成即显式退出。
@@ -22,6 +25,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const http = require('node:http');
 const Module = require('node:module');
 
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-'));
@@ -118,12 +122,87 @@ const t5 = require('./dist/step-session.js');
 let wired = null;
 const root = seam.resolveStepCheckout();
 
-function hostFor(confirm, cwd) {
+/** 供「重新绑定工作目录」用例写入可变 cwd。 */
+const boundCwd = { value: HOME };
+
+const REPLY = '行星计划已经排到 Q3';
+/** 一份合法的 OpenAI 流：必须有 finish_reason，否则锁定包判「流提前结束」并重试。 */
+const SSE_BODY = (() => {
+  const sse = (obj) => `data: ${JSON.stringify(obj)}\n\n`;
+  const chunk = (delta) => sse({ id: 'c1', object: 'chat.completion.chunk', choices: [{ index: 0, delta }] });
+  return [
+    chunk({ role: 'assistant' }),
+    chunk({ content: REPLY }),
+    sse({
+      id: 'c1', object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }),
+    'data: [DONE]\n\n',
+  ].join('');
+})();
+
+/**
+ * 起一个本地假 OpenAI 端点，并把模型目录与凭据写进一个临时 Step agent 根。
+ * 这样回合能真的打到模型层——而不是在「没配模型」时提前返回、让断言变成空转。
+ * 凭据与模型目录都落在临时根里，不碰用户真的 ~/.stepcode。
+ */
+async function startFakeProvider() {
+  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-stepagent-'));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-turncwd-'));
+  const hits = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      hits.push({ url: req.url, body });
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end(SSE_BODY);
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  // 凭据与模型目录都写进临时根；用锁定包读的形状（agents 读 auth.json，models 读 models.json）。
+  fs.writeFileSync(path.join(agentDir, 'auth.json'), JSON.stringify({
+    localmock: { type: 'api_key', key: 'probe-key' },
+  }));
+  fs.writeFileSync(path.join(agentDir, 'models.json'), JSON.stringify({
+    providers: {
+      localmock: {
+        baseUrl: `http://127.0.0.1:${port}/v1`,
+        api: 'openai-completions',
+        apiKey: 'probe-key',
+        models: [{ id: 'probe-model', name: 'Probe Model', input: ['text'] }],
+      },
+    },
+  }));
+  // 告诉锁定包用这个临时根；测完还原，别影响同进程里别的套件。
+  const prevAgentDir = process.env.STEP_CODING_AGENT_DIR;
+  const prevAuth = process.env.STEPCODE_AUTH_PATH;
+  process.env.STEP_CODING_AGENT_DIR = agentDir;
+  process.env.STEPCODE_AUTH_PATH = path.join(agentDir, 'auth.json');
   return {
-    extension: () => wired.extension,
+    agentDir,
+    cwd,
+    hits,
+    close() {
+      server.close();
+      if (prevAgentDir === undefined) delete process.env.STEP_CODING_AGENT_DIR;
+      else process.env.STEP_CODING_AGENT_DIR = prevAgentDir;
+      if (prevAuth === undefined) delete process.env.STEPCODE_AUTH_PATH;
+      else process.env.STEPCODE_AUTH_PATH = prevAuth;
+      fs.rmSync(agentDir, { recursive: true, force: true });
+      fs.rmSync(cwd, { recursive: true, force: true });
+    },
+  };
+}
+
+function hostFor(confirm, cwd, onDelta) {
+  return {
+    composed: () => wired,
     preset: () => wired.preset,
     sessionCwd: () => cwd,
-    notifyAgentDelta: () => {},
+    notifyAgentDelta: (_sid, text) => { if (onDelta) onDelta(text); },
     notifyToolStep: () => {},
     uiContext: () => buildUiContext(confirm),
     root: () => root,
@@ -159,10 +238,9 @@ function hostFor(confirm, cwd) {
   });
 
   await check('组合未接上时不放行（fail-closed）', async () => {
-    const saved = seam.currentStepExtension();
-    // 直接把当前组合置空，宿主再交出去必须报错而不是悄悄换一条路。
+    // 不碰模块内 current，只让这一调宿主交不出组合：必须报错而不是悄悄换一条路。
     const p = t5.runStepSessionTurn('s-fail', 'hi', {
-      extension: () => undefined,
+      composed: () => undefined,
       preset: () => 'bypass',
       sessionCwd: () => HOME,
       notifyAgentDelta: () => {},
@@ -172,39 +250,101 @@ function hostFor(confirm, cwd) {
     });
     await assert.rejects(() => p, /进程内组合未接上/);
     t5.resetStepSessionCache();
-    // 还原，避免影响后续用例。
-    if (saved) { /* 模块内 current 仍指向 saved；这里只确认行为 */ }
   });
 
-  await check('会话由锁定点工厂交出，且挂的是本 GUI 已组合的扩展', async () => {
-    const locked = await (new Function('specifier', 'return import(specifier)'))(
-      require('url').pathToFileURL(path.join(root, 'packages', 'coding-agent', 'dist', 'index.js')).href,
-    );
-    assert.equal(typeof locked.createStepAgentSession, 'function');
-    assert.equal(typeof locked.DefaultResourceLoader, 'function');
-    // 组合出的扩展必须带 hidden 标记（createStepExtensionInline 的产物）。
-    assert.equal(wired.extension.name, 'Step');
-  });
-
-  await check('会话路径不发模型 HTTP（OpenAI 循环已删）', async () => {
-    fetchCalls = 0;
-    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-cwd-'));
+  await check('真实回合：用户发送真的走通并返回模型回复', async () => {
+    const rt = await startFakeProvider();
     try {
-      await t5.runStepSessionTurn('s-http', '你在吗', hostFor(async () => false, cwd));
-    } catch { /* 没有模型凭据时允许失败 */ }
-    assert.equal(fetchCalls, 0, '不该发出模型 HTTP 请求（实际 ' + fetchCalls + ' 次）');
-    t5.resetStepSessionCache();
-    fs.rmSync(cwd, { recursive: true, force: true });
+      const deltas = [];
+      const res = await t5.runStepSessionTurn('s-turn', '帮我写个一句话介绍', hostFor(
+        async () => false,
+        rt.cwd,
+        (text) => deltas.push(text),
+      ));
+      assert.equal(res.intent, 'ACT');
+      assert.equal(res.text.trim(), REPLY,
+        '最终回复应取会话里最后一条 assistant 消息');
+      assert.ok(deltas.length >= 1, '流式增量应经 agent-delta 转发');
+      assert.equal(deltas.join('').trim(), REPLY,
+        '转发出去的增量拼起来就是回复正文');
+      assert.equal(rt.hits.length, 1, '只应发一次模型请求');
+      assert.ok(rt.hits[0].url.startsWith('/v1/chat/completions'),
+        '模型请求应由锁定包自己发起，不经旧 OpenAI 循环');
+    } finally {
+      rt.close();
+    }
   });
 
-  await check('危险命令确认走本 GUI 的 confirm（同一审批入口）', async () => {
-    const confirms = [];
-    const confirm = async (title, message) => { confirms.push({ title, message }); return false; };
-    const asked = await wired.confirm('Dangerous bash', 'Call: git reset --hard');
-    assert.equal(asked, false);
-    assert.equal(seam.GUI_CONFIRM_CHANNEL, 'orchdesk:authz-approval-request');
-    assert.equal(typeof wired.ui.confirm, 'function');
-    assert.equal(confirms.length, 0, '直接调 confirm 不应经 IPC 推送（无窗口时 fail-closed）');
+  await check('同一条 GUI 会话复用历史，换会话不带别人历史', async () => {
+    const rt = await startFakeProvider();
+    try {
+      await t5.runStepSessionTurn('s-a', '第一轮问题', hostFor(async () => false, rt.cwd));
+      const beforeSecond = rt.hits.length;
+      await t5.runStepSessionTurn('s-a', '第二轮问题', hostFor(async () => false, rt.cwd));
+      const secondBody = rt.hits[beforeSecond].body;
+      assert.ok(secondBody.includes('第一轮问题'),
+        '同会话第二轮应带上首轮历史（会话是按 sessionId 缓存的）');
+
+      const beforeOther = rt.hits.length;
+      t5.resetStepSessionCache();
+      await t5.runStepSessionTurn('s-b', '另一条会话', hostFor(async () => false, rt.cwd));
+      const otherBody = rt.hits[beforeOther].body;
+      assert.equal(
+        otherBody.includes('第一轮问题') || otherBody.includes('第二轮问题'),
+        false,
+        '换 sessionId 不得读到上一条会话的历史',
+      );
+    } finally {
+      rt.close();
+    }
+  });
+
+  await check('会话与凭据落在 Step 自己的存储根（ADR 0005 第 5 条）', async () => {
+    const rt = await startFakeProvider();
+    try {
+      await t5.runStepSessionTurn('s-store', '写点什么', hostFor(async () => false, rt.cwd));
+      // 会话文件必须出现在 Step 的 agentDir 下，而不是 OrchDesk 的数据目录。
+      const stepSessions = path.join(rt.agentDir, 'sessions');
+      assert.ok(fs.existsSync(stepSessions), 'Step 会话目录应存在');
+      const files = fs.readdirSync(stepSessions);
+      assert.ok(files.length > 0, '回合应在 Step 会话目录下留下会话文件');
+      const guiLeak = fs.readdirSync(HOME);
+      assert.deepStrictEqual(guiLeak, ['logs'],
+        'OrchDesk 数据目录不得出现本 GUI 自己的会话/凭据文件');
+    } finally {
+      rt.close();
+    }
+  });
+
+  await check('会话按绑定工作目录取，不会静默落到用户主目录', async () => {
+    const rt = await startFakeProvider();
+    const asPosix = (p) => p.split(path.sep).join('/');
+    try {
+      const boundCwds = [];
+      const host = hostFor(async () => false, rt.cwd);
+      // 模拟渲染层给这条会话绑定的项目目录（set-session-cwd → setSessionCwd）。
+      const bound = Object.create(host, {
+        sessionCwd: { value: () => boundCwd.value },
+      });
+      boundCwd.value = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-cwd1-'));
+      boundCwds.push(boundCwd.value);
+      await t5.runStepSessionTurn('s-cwd', '第一条', bound);
+      const firstBody = rt.hits[rt.hits.length - 1].body;
+      assert.ok(firstBody.includes(asPosix(boundCwd.value)),
+        '系统提示应包含会话绑定的工作目录，而不是用户主目录');
+
+      // 重新绑定到另一个目录：会话必须跟着换。
+      t5.resetStepSessionCache();
+      boundCwd.value = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-cwd2-'));
+      await t5.runStepSessionTurn('s-cwd', '第二条', bound);
+      const secondBody = rt.hits[rt.hits.length - 1].body;
+      assert.ok(secondBody.includes(asPosix(boundCwd.value)),
+        '重新绑定后应取新目录');
+      assert.equal(secondBody.includes(asPosix(boundCwds[0])), false,
+        '旧目录不应继续作为工作目录');
+    } finally {
+      rt.close();
+    }
   });
 
   await check('权限值仍只有 bypass / autopilot（两档）', async () => {
@@ -215,12 +355,12 @@ function hostFor(confirm, cwd) {
     }
   });
 
-  await check('会话存储与模型凭据留在 Step 运行时自己的存储根', async () => {
-    // createStepAgentSession 未显式给 sessionDir 时，Pi 自己按 cwd 派生；
-    // 本 GUI 不注入自己的会话格式，也不迁移旧文件。
-    const locked = require('./dist/step-session.js');
-    assert.equal(typeof locked.resetStepSessionCache, 'function');
-    locked.resetStepSessionCache();
+  await check('危险命令确认走本 GUI 的 confirm（同一审批入口）', async () => {
+    const asked = await wired.confirm('Dangerous bash', 'Call: git reset --hard');
+    assert.equal(asked, false);
+    assert.equal(seam.GUI_CONFIRM_CHANNEL, 'orchdesk:authz-approval-request');
+    assert.equal(typeof wired.ui.confirm, 'function');
+    // 深度断言放在 step-session-verify.cjs：它直接驱动会话的 beforeToolCall。
   });
 
   console.log('\n' + log.join('\n'));

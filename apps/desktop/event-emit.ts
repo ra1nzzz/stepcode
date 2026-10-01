@@ -1,7 +1,7 @@
 /**
  * Canonical Event Emission — 双写层（本地 SessionEvent NDJSON + Canonical Envelope）
  * ----------------------------------------------------------------------------
- * Phase 8 核心：runAgentTurn / executeTool 通过本模块 emit 事件，实现：
+ * Phase 8 核心：runStepSessionTurn / executeTool 通过本模块 emit 事件，实现：
  *   1. 本地 SessionEvent NDJSON 追加（保留现有 append-only 不变量）
  *   2. Canonical Event Envelope 产出（供 SSE/WS 消费者推送）
  *

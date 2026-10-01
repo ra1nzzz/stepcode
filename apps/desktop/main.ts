@@ -67,7 +67,7 @@ import {
 import { isAbsoluteLike } from './common-tools';
 import { callModel as callModelHttp, initModelClient } from './model-client';
 import { initModelCatalog, refreshCatalogInBackground, getCatalogPresets, listAvailableModels } from './model-catalog';
-import { abortStepSession, hasActiveStepTurn, runStepSessionTurn, type StepSessionHost, type StepUiContext } from './step-session';
+import { abortStepSession, hasActiveStepTurn, resetStepSessionCache, runStepSessionTurn, type StepSessionHost, type StepUiContext } from './step-session';
 import { executeTool, initToolExec, sessionCwd, setSessionCwd } from './tool-exec';
 import { registerBrowserIpc } from './ipc-browser';
 import { preloadTerminalPty, registerTerminalIpc } from './ipc-terminal';
@@ -550,13 +550,17 @@ initMarket({ dataDir });
 // confirm：锁定包的权限控制器在 tool_call 上读 ctx.ui.confirm，只有这一个审批入口。
 // 其余 UI 方法是主进程里的空操作——本 GUI 的界面就是渲染层，主进程不另画一套。
 const stepSessionHost: StepSessionHost = {
-  extension: () => currentStepExtension()?.extension,
+  composed: () => currentStepExtension() ?? undefined,
   preset: () => currentStepExtension()?.preset ?? 'bypass',
-  sessionCwd,
+  // 必须把 sessionId 透出去：tool-exec 的 sessionCwd 不带 id 时永远返回全局
+  // 默认目录，用户在侧栏会话上绑定的项目目录会被静默忽略。
+  sessionCwd: (sessionId?: string) => sessionCwd(sessionId),
   notifyAgentDelta,
   notifyToolStep,
   uiContext: () => buildStepUiContext(),
-  root: () => resolveStepCheckout(),
+  // bootRuntime 已经解析过一次锁定点；这里取缓存值，避免首次发送再同
+  // 步跑一遍 git checkout 探测（Electron 主进程同步阻塞整个 UI）。
+  root: () => stepCheckoutRoot ?? resolveStepCheckout(),
 };
 
 function buildStepUiContext(): StepUiContext {
@@ -864,6 +868,12 @@ ipcMain.handle('orchdesk:ollama-probe', async () => {
 let authzService: AuthzServiceLike | null = null;
 
 /**
+ * bootRuntime 解析出的锁定点根。第一次建会话时顺手记住，后续复用：
+ * resolveStepCheckout 会同步跑 git 探测，不能放到用户点击发送的那一帧上。
+ */
+let stepCheckoutRoot: string | null = null;
+
+/**
  * dsh 已卸下。不启动宿主服务。
  * 产品默认是明确的 bypass，不是锁定包未选择策略时的交互默认。
  */
@@ -875,6 +885,7 @@ async function bootRuntime(): Promise<void> {
       preset: 'bypass',
       confirm: guiStepConfirm(),
     });
+    stepCheckoutRoot = resolveStepCheckout();
     log('INFO', 'step', `进程内组合已接上，预设 ${wired.preset}`);
   } catch (err) {
     log('WARN', 'step', `进程内组合未接上（fail-closed）：${(err as Error).message}`);
@@ -977,7 +988,13 @@ registerAuthzIpc(ipcMain, {
   sendToRenderer,
   listGuiModes: () => listGuiPermissionModes(),
   getGuiPreset: () => currentStepExtension()?.preset ?? null,
-  setGuiPreset: (mode) => selectGuiPreset({ preset: mode, confirm: guiStepConfirm() }),
+  setGuiPreset: async (mode) => {
+    const r = await selectGuiPreset({ preset: mode, confirm: guiStepConfirm() });
+    // 权限策略随组合扩展进会话：换了档就必须丢掉旧会话，否则新档只对新
+    // 建会话生效，正在跑的那条仍用旧策略。
+    if (r.ok) resetStepSessionCache();
+    return r;
+  },
 });
 // M2：记忆/提示词/插件能力 IPC 抽至独立模块——组合根只保留编排与注册。
 registerMemoryIpc(ipcMain, { dataDir, loadModelConfig });

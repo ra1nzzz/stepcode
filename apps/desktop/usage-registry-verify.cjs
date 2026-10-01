@@ -4,8 +4,12 @@
  * A 组：纯逻辑（require dist/usage-registry.js）—— 三家 API 的 usage 形态归一化
  *      （chat / responses / Ollama / 缺字段）/ 追加与环形 / 聚合 / 文件 roundtrip。
  * B 组：stub electron 驱动真实 IPC —— 种子 usage.json → orchdesk:usage 聚合视图
- *      → usage-clear 归零。「回合产生条目」的线级验证在 step-t5-verify.cjs
- *      （那里有真 HTTP mock 的完整 agent 回合）。
+ *      → usage-clear 归零。
+ *
+ * 「回合产生条目」这一侧的覆盖随 `model-loop-verify.cjs` 删除而归零：唯一写用量
+ * 文件的生产代码在 `agent-turn.ts`（已删），本页只覆盖用量文件本身的读写与聚合，
+ * 不声称回合已被核对。要不要从 Step 会话侧记账（`AssistantMessage.usage` 在
+ * `message_end` 上）是另一个决定，不在本页假装已完成。
  *
  * 运行：node usage-registry-verify.cjs
  */

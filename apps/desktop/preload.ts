@@ -37,7 +37,7 @@ const orchdesk = {
   persistProjects: (projects: Array<{ id: string; n?: string; sessions?: string[]; archived?: number }>): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('orchdesk:persist-projects', projects),
 
-  /** 工具执行步骤（主进程 runAgentTurn 实时推送；此前无订阅方，步骤条永远为空）。 */
+  /** 工具执行步骤（主进程 step-session 实时推送；此前无订阅方，步骤条永远为空）。 */
   onToolStep: (cb: (step: { sessionId: string; name: string; ph: 'running' | 'done' | 'error'; result?: string }) => void): (() => void) => {
     const listener = (_e: unknown, step: { sessionId: string; name: string; ph: 'running' | 'done' | 'error'; result?: string }): void => cb(step);
     ipcRenderer.on('orchdesk:tool-step', listener);
