@@ -186,6 +186,34 @@ async function main() {
     assert.equal(imported, 0);
   });
 
+  await check('官方源仓库的新修订可以加载', async () => {
+    let imported = 0;
+    const root = seam.resolveStepCheckout();
+    const loaded = await seam.loadStepRuntime(root, {
+      nodeVersion: '22.19.0',
+      readOrigin: () => ({ source: seam.OFFICIAL_STEP_SOURCE, commit: 'a'.repeat(40), tree: 'b'.repeat(40) }),
+      entryExists: () => true,
+      importModule: async () => { imported += 1; return { createStepExtensionInline() {} }; },
+    });
+    assert.equal(typeof loaded.createStepExtensionInline, 'function');
+    assert.equal(imported, 1);
+  });
+
+  await check('官方修订没有接缝时不导入', async () => {
+    let imported = 0;
+    const root = seam.resolveStepCheckout();
+    await assert.rejects(
+      () => seam.loadStepRuntime(root, {
+        nodeVersion: '22.19.0',
+        readOrigin: () => ({ source: seam.OFFICIAL_STEP_SOURCE, commit: 'a'.repeat(40), tree: 'b'.repeat(40) }),
+        entryExists: () => true,
+        importModule: async () => { imported += 1; return {}; },
+      }),
+      /没有 createStepExtensionInline/,
+    );
+    assert.equal(imported, 1);
+  });
+
   await check('锁定点不符时不导入', async () => {
     let imported = 0;
     await assert.rejects(

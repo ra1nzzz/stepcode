@@ -2,7 +2,7 @@
 id: adr-0003
 type: adr
 status: accepted
-updated: 2026-09-29
+updated: 2026-10-01
 ---
 
 # ADR 0003 — 采用 Step Code CLI 及其权限档
@@ -22,6 +22,10 @@ updated: 2026-09-29
 3. 撤回「部分信任」「完全信任」作为模式。它们不是 CLI 的档，也不映射到 OrchDesk 的 `default` / `trusted` / `paranoid`。
 4. 跟随官方更新指移动这个锁定点，并另记 ADR。不漂在 `main` 上，也不把 `step update` 当成源码锁定方式。
 5. ISO 10303 的 `stepcode/stepcode` 仍然排除，见 [ADR 0002](0002-排除-stepcode.md)。
+
+## 后续
+
+2026-10-01：[ADR 0008](0008-跟随-step-code-源仓库.md) 取代本 ADR 第 4 条。跟随官方更新不再要求每次移动锁定点都另记 ADR。`93ebc5be` 改为随包兜底。第 1 条的来源仓库不变。第 2、3 条的运行时档定义不变；界面暴露范围仍以 ADR 0004 为准。
 
 ## 未决
 

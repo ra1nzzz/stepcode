@@ -34,6 +34,7 @@ import { registerPromptIpc } from './ipc-prompt';
 import { registerPluginCapabilityIpc, type CompensationServiceLike } from './ipc-plugins';
 import { APPROVAL_TIMEOUT_MS, getHostServices } from './host-services';
 import { connectStepExtension, createGuiStepConfirm, currentStepExtension, listGuiPermissionModes, resolveStepCheckout, selectGuiPreset } from './step-extension';
+import { prepareOfficialRuntime } from './step-follow';
 import { withTimeout } from './memory-summarize';
 import { encryptSecret, decryptSecret, isV1Cipher } from './credentials';
 import { initLogger, mirrorConsole, log, logFilePath } from './logger';
@@ -946,6 +947,13 @@ async function bootRuntime(): Promise<void> {
   log('INFO', 'dsh', DSH_UNLOAD_REASON);
   authzService = null;
   try {
+    const prepared = prepareOfficialRuntime();
+    if (prepared.root) {
+      process.env.ORCHDESK_STEP_RUNTIME = prepared.root;
+      log('INFO', 'step', prepared.note);
+    } else {
+      log('WARN', 'step', prepared.note);
+    }
     const wired = await connectStepExtension({
       preset: 'bypass',
       confirm: guiStepConfirm(),
