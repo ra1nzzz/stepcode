@@ -47,10 +47,17 @@ export interface AuthzIpcDeps {
   getAuthz: () => AuthzServiceLike | null;
   /** 推渲染层（审批弹窗）。 */
   sendToRenderer: (channel: string, payload: unknown) => void;
-  /** 界面两档。提供后不再把已卸下的授权插件模式透传给界面。 */
+  /** 两档读写。提供后不再把已卸下的授权插件模式透传给界面。 */
   listGuiModes?: () => readonly GuiModeLike[];
   getGuiPreset?: () => string | null;
   setGuiPreset?: (mode: string) => Promise<{ ok: boolean; preset?: string; reason?: string }>;
+  /**
+   * 主进程给出的「这个 sender 是不是唯一可信窗」。
+   * `orchdesk:authz-submit-decision` 走 ipcMain.on，落在 main.ts 对 handle 的 sender 门
+   * 覆盖范围之外；没有这道回调时它只比「senderFrame 是不是自己那个 mainFrame」，
+   * 于是任何带 preload 的第二窗都能代替主窗应答全部挂起审批（含 allowed-once）。
+   */
+  isTrustedSender?: (sender: unknown) => boolean;
 }
 
 /** 审批挂起表：id → 应答方 + 超时兜底器（fail-closed：超时 resolve unavailable）。 */
@@ -150,6 +157,13 @@ export function registerAuthzIpc(ipc: IpcMain, deps: AuthzIpcDeps): void {
     const frame = e ? e.senderFrame : null;
     const mainFrame = sender && typeof sender.mainFrame !== 'undefined' ? sender.mainFrame : null;
     if (frame && mainFrame && frame !== mainFrame) return;   // 子 frame 代答一律拒绝
+    // R5：frame 判据只排除「子 frame」，不排除「别的窗」。另一扇带 preload 的合法窗
+    // 满足 frame === 自己的 mainFrame，于是能替主窗应答全部挂起审批。这里补上与
+    // ipcMain.handle 同一口径的 sender 身份门：真实 webContents 必须是可信窗。
+    if (sender !== null && sender !== undefined && deps.isTrustedSender && !deps.isTrustedSender(sender)) {
+      log('WARN', 'authz', `拒绝不可信 IPC sender 应答审批（${id}）`);
+      return;
+    }
     const pending = pendingApprovals.get(id);
     if (!pending) return;
     clearTimeout(pending.timer);

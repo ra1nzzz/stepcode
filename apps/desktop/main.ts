@@ -1051,6 +1051,7 @@ registerBrowserIpc(ipcMain, { dataDir, notify: sendToRenderer });
 registerAuthzIpc(ipcMain, {
   getAuthz: () => authzService,
   sendToRenderer,
+  isTrustedSender: isTrustedIpcSender,
   listGuiModes: () => listGuiPermissionModes(),
   getGuiPreset: () => currentStepExtension()?.preset ?? null,
   setGuiPreset: async (mode) => {

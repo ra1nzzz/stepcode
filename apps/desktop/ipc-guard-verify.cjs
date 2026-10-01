@@ -51,6 +51,29 @@ async function check(name, fn) {
     assert.ok(probe.goodSecond === true, `第二 channel 主窗 sender 也应放行，实际 ${JSON.stringify(probe.goodSecondErr)}`);
   });
 
+  await check('on 通道：不可信 sender 不得应答挂起审批（frame 判据不够）', () => {
+    assert.strictEqual(probe.foreignErr, null, `探针调用异常：${probe.foreignErr}`);
+    assert.deepStrictEqual(
+      probe.foreignAnswered, [],
+      `另一扇窗的 sender 不该应答审批，实际应答了 ${JSON.stringify(probe.foreignAnswered)}`,
+    );
+  });
+
+  await check('on 通道：主窗 sender 仍能正常应答 allowed-once', () => {
+    assert.strictEqual(probe.mainErr, null, `探针调用异常：${probe.mainErr}`);
+    assert.ok(
+      (probe.mainAnswered || []).includes('allowed-once'),
+      `主窗应答必须落到 resolve，实际 ${JSON.stringify(probe.mainAnswered)}`,
+    );
+  });
+
+  await check('on 通道：进程内直调（sender 缺省）保持放行', () => {
+    assert.ok(
+      (probe.nullAnswered || []).includes('rejected'),
+      `null sender 直调应放行（与 handle 层同口径），实际 ${JSON.stringify(probe.nullAnswered)}`,
+    );
+  });
+
   console.log('\n' + log.join('\n'));
   console.log(`\n结果：通过 ${passed} / 失败 ${failed}\n`);
   process.exit(failed ? 1 : 0);
@@ -115,6 +138,36 @@ function runProbe() {
 
       try { await call('orchdesk:models-get', mainWin.webContents); out.goodSecond = true; }
       catch (e) { out.goodSecond = false; out.goodSecondErr = e && (e.message || String(e)); }
+
+      // orchdesk:authz-submit-decision 走 ipcMain.on，handle 层的 sender 门覆盖不到它。
+      // 旧判据只比「senderFrame 是不是自己那个 mainFrame」，另一扇带 preload 的合法窗
+      // 天然满足，于是能替主窗应答全部挂起审批（含 allowed-once）。
+      const az = require(${JSON.stringify(path.join(__dirname, 'dist', 'ipc-authz.js'))});
+      const answered = [];
+      const mkPending = () => {
+        const id = az.nextApprovalId();
+        az.pendingApprovals.set(id, { resolve: (o) => answered.push(o), timer: setTimeout(() => {}, 5000) });
+        return id;
+      };
+      const onFire = (sender, id, outcome) => {
+        const fn = stub.ipcListeners.get('orchdesk:authz-submit-decision');
+        if (!fn) throw new Error('authz on-listener 未注册');
+        fn({ sender, senderFrame: sender ? sender.mainFrame : null }, id, outcome);
+      };
+
+      const idForeign = mkPending();
+      try { onFire(thirdParty, idForeign, 'allowed-once'); out.foreignErr = null; }
+      catch (e) { out.foreignErr = String((e && e.message) || e); }
+      out.foreignAnswered = answered.slice();
+
+      const idMain = mkPending();
+      try { onFire(mainWin.webContents, idMain, 'allowed-once'); out.mainErr = null; }
+      catch (e) { out.mainErr = String((e && e.message) || e); }
+      out.mainAnswered = answered.slice();
+
+      const idNull = mkPending();
+      onFire(null, idNull, 'rejected');
+      out.nullAnswered = answered.slice();
 
       console.log('RESULT_JSON:' + JSON.stringify(out));
       process.exit(0);

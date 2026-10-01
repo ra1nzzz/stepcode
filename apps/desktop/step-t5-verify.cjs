@@ -94,7 +94,34 @@ function makeElectronStub() {
       getPath: () => HOME,
     },
     ipcMain: { handle: (ch, fn) => ipcHandlers.set(ch, fn), on() {} },
-    BrowserWindow: class {},
+    // 原先是 `class {}`：真实 createWindow 要读 webContents.on / setWindowOpenHandler，
+    // 空类让启动路径每次都以 TypeError 收尾，被 main.ts 的 unhandledRejection 处理器
+    // 打成一行 ERROR 混进日志。产品里 webContents 一定存在，所以这是桩的缺陷，
+    // 但它同时把「启动有没有逃逸的 rejection」这条信号吃掉了——补成最小可用面。
+    BrowserWindow: class {
+      constructor() {
+        this.webContents = {
+          on: () => {},
+          once: () => {},
+          setWindowOpenHandler: () => {},
+          getTitle: () => '',
+          getURL: () => 'file:///stub/index.html',
+          isDestroyed: () => false,
+          send: () => true,
+        };
+      }
+      on() {}
+      once() {}
+      loadFile() { return Promise.resolve(); }
+      loadURL() { return Promise.resolve(); }
+      show() {}
+      hide() {}
+      focus() {}
+      close() {}
+      destroy() {}
+      isDestroyed() { return false; }
+      static getAllWindows() { return []; }
+    },
     safeStorage: { isEncryptionAvailable: () => false, encryptString: (s) => Buffer.from(s), decryptString: (b) => b.toString() },
     shell: { openExternal: () => Promise.resolve() },
     dialog: {},
@@ -105,6 +132,17 @@ function makeElectronStub() {
 }
 
 const electronStub = makeElectronStub();
+
+/**
+ * 启动路径逃逸出去的 rejection 一律收集，最后一条用例断言它为空。
+ * main.ts 装了 unhandledRejection 处理器（只打日志不退出），所以这类缺陷过去
+ * 只会变成一行没人看的 ERROR；本套件把它变成会红的判据。
+ */
+const bootRejections = [];
+process.on('unhandledRejection', (reason) => {
+  bootRejections.push(String((reason && reason.stack) || reason));
+});
+
 const origLoad = Module._load;
 Module._load = function (req) {
   if (req === 'electron') return electronStub;
@@ -460,6 +498,17 @@ function hostFor(confirm, cwd, onDelta) {
     assert.equal(seam.GUI_CONFIRM_CHANNEL, 'orchdesk:authz-approval-request');
     assert.equal(typeof wired.ui.confirm, 'function');
     // 深度断言放在 step-session-verify.cjs：它直接驱动会话的 beforeToolCall。
+  });
+
+  await check('启动路径不逃逸 unhandledRejection（桩必须撑得住真实 createWindow）', async () => {
+    // whenReady 是 Promise.resolve()，启动链在后续 tick 才走到 createWindow；
+    // 让宏任务排空一次再判定，否则这条会假绿。
+    await new Promise((r) => setTimeout(r, 300));
+    assert.strictEqual(
+      bootRejections.length,
+      0,
+      `启动过程逃逸 ${bootRejections.length} 条 rejection：\n${bootRejections.join('\n---\n')}`,
+    );
   });
 
   console.log('\n' + log.join('\n'));
