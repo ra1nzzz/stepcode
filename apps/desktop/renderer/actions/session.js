@@ -15,6 +15,11 @@ function installSessionActions(ACTIONS, ctx) {
   
   }
 
+  async function act_toggle_side(el, id, e) {
+    const grid = ctx.$('#appGrid');
+    if (grid) grid.classList.toggle('side-open');
+  }
+
   async function act_toggle_theme(el, id, e) {
  { ctx.state.theme = ctx.state.theme === 'light' ? 'dark' : 'light'; document.documentElement.dataset.theme = ctx.state.theme;}
   
@@ -1097,6 +1102,7 @@ function installSessionActions(ACTIONS, ctx) {
 
   Object.assign(ACTIONS, {
     'nav': act_nav,
+    'toggle-side': act_toggle_side,
 
     'toggle-theme': act_toggle_theme,
     'toggle-ctx': act_toggle_ctx,

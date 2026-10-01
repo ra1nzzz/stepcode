@@ -477,7 +477,8 @@
     // rail 常驻：三页导航（会话/插件/设置）+ 底部主题切换。
     // 历史注释承诺的「底部给模式切换」随双壳层/导航抽屉取消已不存在——模式切换改在
     // 设置页「沙箱与授权」与授权模式弹窗里，此处不再预留位置。
-    $('#rail').innerHTML = PAGES.map((p) => `<button class="navbtn ${state.page === p.id ? 'active' : ''}" data-action="nav" data-id="${p.id}" title="${p.n}">${ic(p.icon)}<span class="nl">${p.n}</span></button>`).join('') +
+    $('#rail').innerHTML = `<button class="navbtn side-toggle" data-action="toggle-side" title="会话列表" aria-label="打开或收起会话列表">${ic('grid', 16)}<span class="nl">会话</span></button>` +
+      PAGES.map((p) => `<button class="navbtn ${state.page === p.id ? 'active' : ''}" data-action="nav" data-id="${p.id}" title="${p.n}">${ic(p.icon)}<span class="nl">${p.n}</span></button>`).join('') +
       `<div class="sp"></div><button class="navbtn" data-action="toggle-theme" title="切换主题">${ic('sun')}<span class="nl">主题</span></button>`;
   }
 
@@ -1034,7 +1035,7 @@
     return { steps, source: steps.length ? 'list' : 'none' };
   }
 
-  /* ---------- 渲染：侧栏（ZCode 风格：分组/项目切换 + 文件夹图标） ---------- */
+  /* ---------- 渲染：侧栏（分组 / 项目切换 + 文件夹图标） ---------- */
   // 会话行（侧栏三处共用：项目展开 / 轻模式目录分组 / 任务组）。提为函数声明是为了
   // 让定义在前、调用在后的 renderProject 也能共用同一份实现——此前 renderProject 里
   // 内联了一份副本，改样式要改两处（评审 C-F1）。
@@ -1375,17 +1376,17 @@
     toast(`已接入本机 Ollama · ${models.length} 个模型`, 'ok');
   }
 
-  /* ---------- 渲染：会话主区（ZCode 风格：新对话/欢迎页 + 快捷入口） ---------- */
+  /* ---------- 渲染：会话主区（新对话 / 欢迎页 + 快捷入口） ---------- */
   function renderHomeScreen() {
     return `<div class="home-screen">
       <div class="home-greeting">${esc(getGreeting())}</div>
+      <p class="home-note">从一句话开始。不会替你编任务。</p>
       <div class="home-input-wrap">
         <div class="composer"><div class="box">
           <textarea id="homeComposer" placeholder="向 OrchDesk 提问…" rows="1"></textarea>
           <div id="outboundWarn" class="outbound-warn" hidden></div>
           ${composerBarHTML('home-send')}
         </div></div>
-        <p class="home-note">从一句话开始。不会替你编任务。</p>
       </div>
     </div>`;
   }
@@ -1484,7 +1485,7 @@
       return `<div style="flex:1;overflow-y:auto" id="msgScroll">
         <div style="max-width:760px;margin:0 auto;padding:18px 16px 10px">
           <div class="row" style="justify-content:space-between;margin-bottom:4px">
-            <div class="row"><b style="font-size:16px">${esc(s.title)}</b>
+            <div class="row"><b class="sess-title">${esc(s.title)}</b>
               <span class="badge info">${esc(s.expert)}</span></div>
             <div class="row" style="gap:4px">
               ${FORK ? `<button class="btn sm ghost" data-action="fork" data-sid="${esc(s.id)}" title="从此会话创建分支（可选分叉点）">${ic('fork', 13)} 分叉</button>` : ''}
@@ -1502,7 +1503,7 @@
       const s = state.sel && state.sessions[state.sel] ? state.sessions[state.sel] : null;
       const sub = !s
         ? '还没有进行中的回合'
-        : (state.turnBusy === s.id ? '这一回合进行中' : (state.pendingConfirm ? '有待确认的动作' : s.title));
+        : (state.turnBusy === s.id ? '这一回合正在进行' : (state.pendingConfirm ? '有一个动作等待确认' : s.title));
       const plan = s ? extractPlanSteps(s.msgs || []) : { steps: [] };
       const live = s && Array.isArray(state.toolSteps[s.id]) ? state.toolSteps[s.id] : [];
       const showLive = !!(s && state.turnBusy === s.id && live.length);
@@ -1646,8 +1647,7 @@
           <div class="ph">
             <div style="min-width:0;flex:1">
               <div class="ptitle">${p.n}
-                ${pluginBadge(p.id)}
-                ${p.model ? `<span class="badge info">${p.model}</span>` : ''}</div>
+                ${pluginBadge(p.id)}</div>
               <div class="pdesc">${p.d}</div>
               <div class="pmeta">${p.repo ? `<span class="mono">${p.repo}</span>·` : ''}<span class="faint">能力声明</span></div>
               <div class="pcaps" data-expanded="0">${(() => { const cs = p.caps || []; const chip = (c, warn, x) => `<span class="badge cap ${x || ''} ${warn ? 'warn' : ''}">${c}</span>`; const isWarn = (c) => c.includes('write') || c.includes('dispose') || c.includes('commit'); const rest = cs.slice(3); return cs.slice(0, 3).map((c, i) => chip(c, i > 0 && isWarn(c))).join('') + (rest.length ? rest.map((c) => chip(c, isWarn(c), 'extra')).join('') + `<span class="badge cap more" data-action="caps-expand" title="展开全部能力声明">+${rest.length}</span>` : ''); })()}</div>
@@ -2160,13 +2160,13 @@
               <div class="faint" style="font-size:11.5px;margin-top:4px">${m.blurb}</div>
             </div>`).join('')}
           </div>
-          <div class="sec-title" style="margin:16px 0 8px">网络域名白名单</div>
+          <div class="sec-title" style="margin:24px 0 8px">网络域名白名单</div>
           <div class="faint" style="margin-bottom:6px">一行一个域名（如 <span class="mono">github.com</span>），<span class="mono">*</span> 表示不限。<b>留空 = 全部拒绝</b>（fail-closed）：web_fetch / browser_open 命中不了白名单即直接拒绝。内网/云元数据端点另受 SSRF 防护拦截。</div>
           ${state.sandbox.loaded ? '' : '<div class="faint" style="margin-bottom:6px">白名单尚未拉取（主进程未返回）——显示为空，不代表已确认全部拒绝。</div>'}
           <textarea class="inp mono" id="net-allow" rows="3" style="width:100%;font-size:11.5px"${state.sandbox.loaded ? '' : ' disabled'} placeholder="${state.sandbox.loaded ? '' : '未拉取'}">${esc((state.sandbox.networkAllow || []).join('\n'))}</textarea>
 
           <div class="row" style="margin-top:8px"><button class="btn sm primary" data-action="sandbox-save-net">保存白名单</button><span class="faint" id="net-allow-tip"></span></div>
-          <div class="sec-title" style="margin:16px 0 8px">L0-L4 分级</div>
+          <div class="sec-title" style="margin:24px 0 8px">L0-L4 分级</div>
           <div class="levels">
             ${state.authLevels.length ? state.authLevels.map((l) => `<div class="lv"><span class="lv-n">L${l.level}</span><span class="lv-l">${l.label}</span><span class="faint">${l.scope}</span>${l.requiresApproval ? '<span class="badge warn">需授权</span>' : ''}</div>`).join('')
               // P4-S3-06：设置页这处原来也只有「加载中…」一个分支，init 里 getAuthLevels
@@ -2175,7 +2175,7 @@
                 ? '<div class="faint">授权插件未返回分级定义（重进设置页或重启应用可重试）</div>'
                 : '<div class="faint">分级定义未接入（授权服务不可用 · fail-closed：按最严处理）</div>')}
           </div>
-          <div class="sec-title" style="margin:16px 0 8px">授权白名单（可查看可撤销）</div>
+          <div class="sec-title" style="margin:24px 0 8px">授权白名单（可查看可撤销）</div>
           <div class="faint" style="margin-bottom:6px">粒度分「会话 / 永久」，规则 = 操作类型 + 目标（仅 <span class="mono">*</span> 通配，整串匹配）。命中即放行并计入审计。<b>永久粒度不允许</b>「任意操作」或 <span class="mono">*</span> 目标（一次点击不该等于永久免审一切）。</div>
           ${/* P4-S3-08：原实现的默认组合（工具=任意操作 *、粒度=永久）恰好是后端明文拒绝的
                组合，而 placeholder 又明示「或 *」、说明文字说「永久不允许 *」——用户按默认
@@ -2202,16 +2202,16 @@
             <button class="btn sm" data-action="grant-revoke-all" ${state.grants.length ? '' : 'disabled'}>全部撤销</button>
             <span class="faint">撤销立即生效，全部动作入审计日志</span>
           </div>
-          <div class="sec-title" style="margin:16px 0 8px">审计日志（近期）</div>
+          <div class="sec-title" style="margin:24px 0 8px">审计日志（近期）</div>
           <div class="audit-log">
             ${state.authAudit.length ? state.authAudit.slice().reverse().slice(0, 12).map((e) => `<div class="al"><span class="mono" style="font-size:11px">${new Date(e.ts).toLocaleTimeString('zh-CN')}</span><span class="badge ${e.kind === 'approval-decided' ? (e.outcome === 'allowed-once' ? 'ok' : 'danger') : 'info'}">${e.kind}</span>${e.toolName ? `<span class="mono faint">${e.toolName}</span>` : ''}${e.outcome ? `<span class="faint">${e.outcome}</span>` : ''}${e.mode ? `<span class="faint">mode=${e.mode}</span>` : ''}</div>`).join('') : '<div class="faint">暂无审计事件（L3/L4 操作与模式切换会记录于此）</div>'}
           </div>
-          <div class="sec-title" style="margin:16px 0 8px">补偿层审计（边界外操作）</div>
+          <div class="sec-title" style="margin:24px 0 8px">补偿层审计（边界外操作）</div>
           <div class="audit-log">
             ${state.compAudit.length ? state.compAudit.slice().reverse().slice(0, 12).map((e) => `<div class="al"><span class="mono" style="font-size:11px">${new Date(e.ts).toLocaleTimeString('zh-CN')}</span><span class="badge warn">补偿</span><span class="mono faint">${esc(e.text || '')}</span>${e.note ? `<span class="faint">${esc(e.note)}</span>` : ''}</div>`).join('') : '<div class="faint">暂无补偿动作记录（外发/不可逆操作后在此提供「补偿动作」）</div>'}
           </div>
           <div class="row" style="margin-top:8px"><button class="btn sm" data-action="comp-record">+ 记录补偿动作</button><span class="faint">不保证完全撤销，仅尽力补偿</span></div>
-          <div class="sec-title" style="margin:16px 0 8px">沙箱日志（可检索）</div>
+          <div class="sec-title" style="margin:24px 0 8px">沙箱日志（可检索）</div>
           <div class="faint" style="margin-bottom:6px">记录每一次沙箱判定：路径 / 命令 / 域名白名单、授权门、外发预判，以及执行成败。环形缓冲保留最近 ${state.sandboxLog.max} 条，随数据目录迁移。</div>
           <div class="sblog-bar">
             <input type="text" id="sblog-kw" class="inp mono" placeholder="检索：路径 / 命令 / 域名 / 会话 ID" style="flex:1;font-size:11.5px" value="${esc(state.sandboxLog.keyword)}">
@@ -2303,7 +2303,7 @@
               </div>`;
   }).join('') : `<div class="faint">${state.memory.loaded ? (state.memory.domain === 'worker' ? '本域暂无条目（SubAgent 执行完被回收时，其结论会落到这里）' : '本域暂无条目（由下层晋升而来）') : '记忆服务未接入（主进程桥不可用）'}</div>`}
           </div>
-          <div class="sec-title" style="margin:16px 0 8px">晋升审计</div>
+          <div class="sec-title" style="margin:24px 0 8px">晋升审计</div>
           <div class="sblog-bar">
             <select id="mp-ok" class="inp" style="width:120px">
               ${[['all', '全部'], ['true', '已晋升'], ['false', '被拦下']].map(([v, t]) => `<option value="${v}"${state.memoryPromotions.ok === v ? ' selected' : ''}>${t}</option>`).join('')}
@@ -2582,7 +2582,12 @@
     // 旧 toast 会让新 toast 挤出视口。屏读经 toastRoot 的 aria-live 播报。
     while (root.children.length >= 3) root.firstElementChild.remove();
     const t = document.createElement('div'); t.className = 'toast ' + type; t.textContent = msg;
-    root.appendChild(t); setTimeout(() => t.remove(), 3200);
+    root.appendChild(t);
+    // 退出与进入同为 200ms。到点先加 leaving，动画结束后再摘除，避免瞬切。
+    setTimeout(() => {
+      t.classList.add('leaving');
+      setTimeout(() => t.remove(), 200);
+    }, 3000);
   }
 
   /* ---------- Markdown 渲染器（基于 marked.js） ---------- */
