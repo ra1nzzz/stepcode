@@ -503,6 +503,35 @@ function runExpr(expr, dom, extra = {}) {
     assert.strictEqual((await browserStatus()).open, false);
   });
 
+  await check('跳转拦截：will-redirect / will-navigate 命中内网目标即 preventDefault，公网放行', async () => {
+    // ipc-browser.ts 只挡初始 URL；302 到 169.254.169.254 会绕过一切，正文还能经
+    // browser_text / 截图取回。browser-cdp 现在给窗口挂了两道复检。
+    const cdp = require('./dist/browser-cdp.js');
+    await cdp.openBrowser('https://example.com/gate', { waitUntil: 'load', timeoutMs: 5000 }).catch(() => {});
+    const win = electronStub.windows.find((w) => w.opts && w.opts.title === 'OrchDesk 浏览器');
+    assert.ok(win, '浏览器窗未创建，拿不到 webContents 订阅');
+    for (const ev of ['will-redirect', 'will-navigate']) {
+      const handlers = win.wcHandlers[ev] || [];
+      assert.ok(handlers.length >= 1, `${ev} 没有注册拦截器（守卫没挂上）`);
+      let blocked = false;
+      const evt = { preventDefault: () => { blocked = true; } };
+      for (const fn of handlers) fn(evt, 'http://169.254.169.254/latest/meta-data/');
+      assert.strictEqual(blocked, true, `${ev} 必须拦住元数据地址`);
+
+      let allowed = false;
+      const evt2 = { preventDefault: () => { allowed = true; } };
+      for (const fn of handlers) fn(evt2, 'https://api.github.com/zen');
+      assert.strictEqual(allowed, false, `${ev} 不该拦公网地址（门不能宽到把功能关掉）`);
+
+      let empty = false;
+      const evt3 = { preventDefault: () => { empty = true; } };
+      for (const fn of handlers) fn(evt3, '');
+      assert.strictEqual(empty, true, `${ev} 对空/非法地址要 fail-closed（isBlockedHost 判 true）`);
+    }
+    const state = JSON.stringify(cdp.getBrowserState());
+    assert.ok(/跳转被拦/.test(state), `拦截要留下可见记录，实际状态 ${state.slice(0, 200)}`);
+  });
+
   const ok = summary('浏览器工具全部验证通过');
   try { fs.rmSync(HOME, { recursive: true, force: true }); } catch { /* 临时目录清理失败无碍 */ }
   process.exit(ok ? 0 : 1);

@@ -147,6 +147,8 @@ function makeElectronStub(opts = {}) {
         this.debugger = dbg;
         this.title = '';
         this.visible = false;
+        this.wcHandlers = {};
+        this.wcHandlersOnce = {};
         this.webContents = {
           send: (ch, payload) => { webSent.push({ ch, payload }); },
           // 浏览器工具（ADR-0011）依赖的页面信息
@@ -156,8 +158,14 @@ function makeElectronStub(opts = {}) {
           debugger: dbg,
           // CDP 截图超时后的回退路径（不依赖合成器）
           capturePage: async () => { capturePageCalls.push(Date.now()); return makeImageStub(Buffer.from('captured-png')); },
-          on: () => {},
-          once: () => {},
+          on: (ev, fn) => {
+            // 记录 webContents 事件订阅，测试才能真的触发 will-redirect / will-navigate。
+            // 过去是 `on: () => {}`：注册被丢掉，任何「跳转拦截」类断言都只能测桩。
+            this.wcHandlers[ev] = (this.wcHandlers[ev] || []).concat(fn);
+          },
+          once: (ev, fn) => {
+            this.wcHandlersOnce[ev] = (this.wcHandlersOnce[ev] || []).concat(fn);
+          },
           // 导航防护（ADR：will-navigate 拦截 + 拒绝弹窗）——main.ts createWindow 调它，
           // 桩需提供方法否则加载即崩。返回 deny 语义的空对象即可（main 未消费返回值）。
           setWindowOpenHandler: () => ({ action: 'deny' }),
