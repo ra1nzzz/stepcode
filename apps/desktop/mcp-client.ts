@@ -124,8 +124,11 @@ export function normalizeMcpConfig(raw: unknown): { ok: true; config: McpServerC
   if (!isMcpId(id)) return { ok: false, reason: 'id 非法（须为 1-64 位、无 / 与 .. 的目录名）' };
   const command = typeof r.command === 'string' ? r.command.trim() : '';
   if (!command) return { ok: false, reason: 'command 为空' };
-  const args = Array.isArray(r.args) ? r.args.filter((a): a is string => typeof a === 'string').slice(0, MAX_ARGS) : [];
-  if (args.length > MAX_ARGS) return { ok: false, reason: `参数过多（上限 ${MAX_ARGS}）` };
+  const argsRaw = Array.isArray(r.args) ? r.args.filter((a): a is string => typeof a === 'string') : [];
+  // 先判上限再截断。原实现先 `.slice(0, MAX_ARGS)` 再 `if (args.length > MAX_ARGS)`，
+  // 那个条件恒为假：超限配置被静默截断并连错误 reason 一起丢掉，用户看到「保存成功」。
+  if (argsRaw.length > MAX_ARGS) return { ok: false, reason: `参数过多（上限 ${MAX_ARGS}）` };
+  const args = argsRaw;
   const envRaw = (r.env && typeof r.env === 'object' ? r.env as Record<string, unknown> : {});
   const envKeys = Object.keys(envRaw).filter((k) => typeof envRaw[k] === 'string');
   if (envKeys.length > MAX_ENV_KEYS) return { ok: false, reason: `环境变量过多（上限 ${MAX_ENV_KEYS}）` };
@@ -252,6 +255,11 @@ export function connectMcpServer(
       });
     };
 
+    // stdin 写失败是**异步** 'error' 事件（子进程已退出后的 EPIPE），try/catch 抓不到。
+    // 没有监听器时 Node 把它抛成 uncaughtException，打包态 main.ts:1330 直接 process.exit(1)
+    // ——整只应用在回合中途死掉。terminal-pty.ts:321 记的是同一条规矩。
+    child.stdin!.on('error', () => { /* 由 child.on('exit'/'error') 统一收尾 */ });
+
     child.stdout!.on('data', (chunk: Buffer) => {
       buf += chunk.toString('utf8');
       let idx;
@@ -355,6 +363,9 @@ export function callMcpTool(
       pending.set(id, { resolve: res, reject: rej });
       try { child.stdin!.write(JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) }) + '\n'); } catch (err) { pending.delete(id); rej(err as Error); }
     });
+
+    // 同 connectMcpServer：子进程退出后的 EPIPE 是异步 'error'，无监听即 uncaughtException。
+    child.stdin!.on('error', () => { /* 由 child.on('exit'/'error') 统一收尾 */ });
 
     child.stdout!.on('data', (chunk: Buffer) => {
       buf += chunk.toString('utf8');

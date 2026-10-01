@@ -333,7 +333,16 @@ interface ModelConfig {
 
 const MODELS_FILE = () => path.join(dataDir(), DATA_FILE_NAMES.models);
 
+/**
+ * 「models.json 读坏了」与「用户还没配提供商」是两件事，原实现把两者都返回空表。
+ * `orchdesk:models-save` 以 `loadModelConfig()` 的结果为基底再落盘，所以一次损坏
+ * （权限、半截写入、手工改坏）会让下一次保存把全部提供商和已存 key 静默丢掉，
+ * 而 UI 仍然显示「保存成功」。这个标志把损坏单独拎出来，保存端据此拒绝写。
+ */
+let modelsFileUnreadable = false;
+
 function loadModelConfig(): ModelConfig {
+  modelsFileUnreadable = false;
   try {
     const file = MODELS_FILE();
     // 三路径默认一致（MAX_TOOL_ITERATIONS_DEFAULT = 200；用户显式配置最多到 500，见 saveModelConfig 钳制）。
@@ -362,11 +371,20 @@ function loadModelConfig(): ModelConfig {
     const hasPlainKey = migrated;
     if (hasPlainKey) saveModelConfig(cfg);
     return cfg;
-  } catch { return { providers: [], defaultProvider: 'ollama', defaultModel: DEFAULT_MODEL, maxToolIterations: MAX_TOOL_ITERATIONS_DEFAULT }; }
+  } catch { modelsFileUnreadable = true; return { providers: [], defaultProvider: 'ollama', defaultModel: DEFAULT_MODEL, maxToolIterations: MAX_TOOL_ITERATIONS_DEFAULT }; }
 }
 
+/** 原子替换：先写同目录临时文件再 rename，崩溃/断电不会留下半个 models.json。 */
 function saveModelConfig(cfg: ModelConfig): void {
-  fs.writeFileSync(MODELS_FILE(), JSON.stringify(cfg, null, 2), 'utf-8');
+  const file = MODELS_FILE();
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf-8');
+  try {
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* 清理失败不覆盖真因 */ }
+    throw err;
+  }
 }
 
 /**
@@ -796,12 +814,39 @@ ipcMain.handle('orchdesk:models-save', async (_e, config: unknown) => {
       return { ok: false, reason: '模型配置格式不合法（providers 含非对象条目）' };
     }
     const current = loadModelConfig();
+    // 读坏的文件不能当「没配过」：本函数以 current 为基底落盘，否则会静默清空全部提供商与 key。
+    if (modelsFileUnreadable) {
+      return { ok: false, reason: `模型配置读取失败（${MODELS_FILE()}）。为避免覆盖掉已有配置，本次保存已中止` };
+    }
+    // 提供商 id 必须非空且唯一。投影端 `toStepModelsJson` 按 id 写对象（后写胜出），
+    // 读取端 `find` 取首个（先写胜出），而渲染层用显示名生成 id（纯中文名会折叠成 '--'）。
+    // 同 id 的两个提供商因此会让回合把 key 发往另一个 baseUrl，或选中的模型不在写出的文件里。
+    const ids = incoming.providers.map((p) => {
+      const raw = (p as unknown as Record<string, unknown>).id;
+      return typeof raw === 'string' ? raw.trim() : '';
+    });
+    if (ids.some((id) => !id)) return { ok: false, reason: '模型配置格式不合法（提供商 id 不能为空）' };
+    const dupes = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+    if (dupes.length) {
+      return { ok: false, reason: `模型配置格式不合法（提供商 id 重复：${dupes.join('、')}）。显示名相同会撞出同一个 id，请改一个可区分的名字` };
+    }
+    // 无加密后端时 encryptKey 拒绝写明文并返回 ''。原实现照样回 {ok:true}，
+    // 于是 key 被丢掉而 UI 显示「保存成功」。宁可保存失败并说明原因。
+    const droppedKey: string[] = [];
     current.providers = incoming.providers.map(p => {
       const existing = current.providers.find(e => e.id === p.id);
-      const apiKeyEnc = (p as unknown as Record<string, unknown>).apiKey ? encryptKey((p as unknown as Record<string, unknown>).apiKey as string) : (existing?.apiKeyEnc || '');
+      const supplied = (p as unknown as Record<string, unknown>).apiKey as string | undefined;
+      let apiKeyEnc = existing?.apiKeyEnc || '';
+      if (supplied) {
+        apiKeyEnc = encryptKey(supplied);
+        if (!apiKeyEnc) droppedKey.push(String(p.id ?? p.name ?? '?'));
+      }
       const { apiKey: _k, ...rest } = p as unknown as Record<string, unknown>;
       return { ...rest, apiKeyEnc } as unknown as ModelProvider;
     });
+    if (droppedKey.length) {
+      return { ok: false, reason: `系统密钥库不可用，API Key 未保存（拒绝明文落盘）：${droppedKey.join('、')}` };
+    }
     if (incoming.defaultProvider) current.defaultProvider = incoming.defaultProvider;
     if (incoming.defaultModel) current.defaultModel = incoming.defaultModel;
     // 与运行时钳制一致（1–500，单源常量 MAX_TOOL_ITERATIONS_CAP），保证所见即所得。

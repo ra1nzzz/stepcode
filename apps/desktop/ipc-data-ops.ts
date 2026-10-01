@@ -31,33 +31,11 @@ function snapshotData(deps: DataOpsIpcDeps): { ok: boolean; dir?: string; reason
 /** 更新前必须完成数据快照（PLAN 红线：不要更新后补）。 */
 export async function checkForUpdates(deps: DataOpsIpcDeps): Promise<{ snapshot: { ok: boolean; dir?: string }; update?: { available: boolean; version?: string; note?: string }; reason?: string }> {
   const snapshot = snapshotData(deps);
-  try {
-    const { autoUpdater } = await import('electron-updater');
-    // 仅在生产包（asar）中启用自动更新，开发模式跳过
-    if (!app.isPackaged) {
-      return { snapshot, update: { available: false, note: '开发模式，跳过自动更新检查' } };
-    }
-    autoUpdater.setFeedURL({
-      provider: 'github',
-      owner: 'ra1nzzz',
-      repo: 'orchdesk',
-    });
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
-    const res = await autoUpdater.checkForUpdates();
-    return {
-      snapshot,
-      update: {
-        available: !!res?.updateInfo?.version,
-        version: res?.updateInfo?.version,
-        note: res?.updateInfo?.version
-          ? `发现新版本 ${res.updateInfo.version}，正在后台下载…`
-          : '已是最新',
-      },
-    };
-  } catch (err) {
-    return { snapshot, reason: `更新检查异常：${(err as Error).message}` };
-  }
+  // 自动更新通道未启用：本仓库没有发布通道（docs/50-发布/发布状态.md）。
+  // 这里原先指向 ra1nzzz/orchdesk 的 GitHub release，并开着 autoDownload +
+  // autoInstallOnAppQuit —— 打包后会下载并安装另一个产品的二进制。
+  // 要重新启用，先按 SPEC「本阶段不写：发布通道」记一条 ADR，再把 feed 指向本仓库。
+  return { snapshot, update: { available: false, note: '本仓库无发布通道，自动更新未启用' } };
 }
 
 export function registerDataOpsIpc(ipc: IpcMain, deps: DataOpsIpcDeps): void {
