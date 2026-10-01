@@ -143,15 +143,21 @@ const nativeImport = new Function('specifier', 'return import(specifier)') as (
 let stepRoot: string | null = null;
 let lockedModule: LockedModule | null = null;
 /**
- * 会话缓存。键是「GUI 会话 id + 该会话绑定的工作目录 + 模型配置指纹」：
+ * 会话缓存。键是 GUI 会话 id，值带该会话建缓存时的 `cwd` 与模型配置指纹：
  *   · 同一条 GUI 会话复用同一条 Step 会话，历史留在 Step 自己的存储根；
  *   · 换会话不会读到别人的历史；
  *   · 工作目录变了（用户重新绑定项目）才重建；
  *   · 模型配置变了（用户在设置页换提供商 / 换 key）也重建——不重建的话下个
  *     回合仍会用旧凭据发请求，就是「设置页对回合没有影响」那个 bug。
+ *
+ * 必须是多槽而不是单槽：侧栏就是给用户同时开几条会话用的。原先只留一条，
+ * A→B→A 会把 A 挤掉并就地重建，A 的上下文在这一轮之后再也回不来，而界面上
+ * 没有任何地方说过「切走会丢」。Map 的插入序当 LRU 用，尾部是最近使用。
  */
 type CachedSession = { sid: string; cwd: string; configFp: string; session: StepSessionLike };
-let cachedSession: CachedSession | null = null;
+const sessionCache = new Map<string, CachedSession>();
+/** 同时驻留的会话上限。超出时淘汰最久未用且不在跑回合的那条，不销毁正在跑的会话。 */
+const MAX_CACHED_SESSIONS = 4;
 const turnAborts = new Map<string, AbortController>();
 
 /** 与缓存键同形的激活标记：回合正在进行的那条会话。 */
@@ -165,7 +171,7 @@ export function abortStepSession(sessionId: string): { ok: boolean; reason?: str
   if (!cur) return { ok: false, reason: 'no-active-turn' };
   cur.abort();
   // 只有中止控制器不够：还会说仍在等模型，必须让会话说 agent.abort()。
-  const target = cachedSession && cachedSession.sid === sid ? cachedSession.session : null;
+  const target = sessionCache.get(sid)?.session ?? null;
   if (target) void target.abort().catch(() => {});
   return { ok: true };
 }
@@ -193,8 +199,17 @@ async function ensureSession(host: StepSessionHost, sid: string): Promise<StepSe
   const cwd = path.resolve(host.sessionCwd(sid));
   const modelConfig = host.modelConfig();
   const configFp = configFingerprint(modelConfig);
-  if (cachedSession && cachedSession.sid === sid && cachedSession.cwd === cwd && cachedSession.configFp === configFp) {
-    return cachedSession.session;
+  const hit = sessionCache.get(sid);
+  if (hit && hit.cwd === cwd && hit.configFp === configFp) {
+    // 命中要刷新 LRU 位置（删掉再插回尾部），否则常用的会话会先被淘汰。
+    sessionCache.delete(sid);
+    sessionCache.set(sid, hit);
+    return hit.session;
+  }
+  if (hit) {
+    // 同一条 GUI 会话但工作目录或模型配置变了：旧会话就地销毁，不留在缓存里等淘汰。
+    sessionCache.delete(sid);
+    try { hit.session.dispose(); } catch { /* 已销毁 */ }
   }
 
   const locked = await resolveLockedModule(host.root);
@@ -225,10 +240,23 @@ async function ensureSession(host: StepSessionHost, sid: string): Promise<StepSe
   });
   const session = created.session;
   await session.bindExtensions({ uiContext: host.uiContext() });
-  // 换键前先销毁旧会话，否则每条 GUI 会话各留一套 agent + loader 不释放。
-  if (cachedSession) disposeCached();
-  cachedSession = { sid, cwd, configFp, session };
+  sessionCache.set(sid, { sid, cwd, configFp, session });
+  evictIdleSessions();
   return session;
+}
+
+/**
+ * 超出上限时按 LRU 淘汰，但**不淘汰正在跑回合的会话**——那会把用户刚发出的
+ * 那条回合并着 agent 一起拆掉。全部都在跑就暂时容忍超额，等下一条回结束。
+ */
+function evictIdleSessions(): void {
+  while (sessionCache.size > MAX_CACHED_SESSIONS) {
+    const victim = [...sessionCache.keys()].find((key) => !turnAborts.has(key));
+    if (!victim) return;
+    const dead = sessionCache.get(victim);
+    sessionCache.delete(victim);
+    try { dead?.session.dispose(); } catch { /* 已销毁 */ }
+  }
 }
 
 /**
@@ -246,26 +274,41 @@ async function writeGuiModelRuntime(locked: LockedModule, cfg: GuiModelConfig): 
   // 内容没变就不落盘：避免每次发送都重写凭据文件（也是给安全审计留干净的时间戳）。
   if (readIfExists(modelsPath) !== models || readIfExists(authPath) !== auth) {
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(modelsPath, models, 'utf-8');
-    fs.writeFileSync(authPath, auth, 'utf-8');
+    // 原子替换。这两个文件是明文书写的模型配置与**凭据**，而锁定包对
+    // `models.json` 的 schema 校验失败时不抛错、静默换成空表——半截写入的
+    // 表现就是「设置页配过提供商却说没有 key」，且看不出文件被写坏过。
+    atomicWrite(modelsPath, models);
+    atomicWrite(authPath, auth);
   }
   return locked.ModelRuntime.create({ authPath, modelsPath });
+}
+
+/** 同目录临时文件 + rename：崩溃/断电不留半个文件。 */
+function atomicWrite(file: string, content: string): void {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, content, 'utf-8');
+  try {
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* 清理失败不覆盖真因 */ }
+    throw err;
+  }
 }
 
 function readIfExists(file: string): string | null {
   try { return fs.readFileSync(file, 'utf-8'); } catch { return null; }
 }
 
-function disposeCached(): void {
-  if (!cachedSession) return;
-  const dead = cachedSession;
-  cachedSession = null;
-  try { dead.session.dispose(); } catch { /* 已销毁 */ }
+function disposeAllCached(): void {
+  for (const [, dead] of sessionCache) {
+    try { dead.session.dispose(); } catch { /* 已销毁 */ }
+  }
+  sessionCache.clear();
 }
 
-/** 丢开会话缓存（模式切换、锁定点重新组合后调用）。 */
+/** 丢开会话缓存（模式切换、锁定点重新组合后调用）。两档变了，缓存里的每条会话都作废。 */
 export function resetStepSessionCache(): void {
-  disposeCached();
+  disposeAllCached();
 }
 
 function collectText(message: unknown): string {

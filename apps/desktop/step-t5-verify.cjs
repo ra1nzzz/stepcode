@@ -436,6 +436,27 @@ function hostFor(confirm, cwd, onDelta) {
     }
   });
 
+  await check('切走再切回：A→B→A 不丢 A 的上下文（缓存不是单槽）', async () => {
+    // 旧实现只有一个缓存槽：建 B 时把 A dispose 掉，切回 A 只能重建，
+    // A 的上下文就此消失，而界面上从没说过「切走会丢」。上一条用例只测了
+    // A→A→reset→B，看不见这个方向，所以缺陷在 12 项全绿的情况下活着。
+    const rt = await startFakeProvider();
+    try {
+      await t5.runStepSessionTurn('s-keep-a', '甲会话的首轮', hostFor(async () => false, rt.cwd));
+      await t5.runStepSessionTurn('s-keep-b', '乙会话的首轮', hostFor(async () => false, rt.cwd));
+
+      const before = rt.hits.length;
+      await t5.runStepSessionTurn('s-keep-a', '甲会话的第二轮', hostFor(async () => false, rt.cwd));
+      const body = rt.hits[before].body;
+      assert.ok(body.includes('甲会话的首轮'),
+        '切回甲会话必须带着它自己的历史（不 reset，靠缓存按 sessionId 各自留着）');
+      assert.equal(body.includes('乙会话的首轮'), false,
+        '切回甲会话不得夹带乙会话的历史');
+    } finally {
+      rt.close();
+    }
+  });
+
   await check('会话与凭据落在 Step 自己的存储根（ADR 0005 第 5 条）', async () => {
     const rt = await startFakeProvider();
     try {
