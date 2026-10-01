@@ -8,9 +8,14 @@
  *     正式发布 tag）时放行；tag 指向别的提交仍然阻断
  * 仓库无任何 tag（首次构建）放行。
  *
- * 文档同步：README.md / CHECKPOINT.md 必须与 apps/desktop/package.json 的 version 对齐。
+ * 文档同步：README.md 必须与 apps/desktop/package.json 的 version 对齐。
  *   - 参数含 `docs`：只跑文档检查（verify 链用，避免已发布版本被 tag 守卫误红）
  *   - 其它模式：先跑文档检查，再跑 tag 守卫
+ *
+ * 历史：本脚本原还核对 `docs/00-项目/CHECKPOINT.md` 的「当前版本」单元格。那次核对在
+ * 文档整合（`docs: split the five-piece control plane`）后失效——该文件已改名为
+ * `检查点.md`，且不再记版本号（发布层事实归 `docs/50-发布/发布状态.md`）。核对一个
+ * 不存在的文件会让 `verify` / `build` / `dist` 全部在第二步红，所以删掉这条 relic。
  */
 const { execSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -24,7 +29,6 @@ const pkg = require(path.join(APP_DIR, 'package.json'));
 function checkDocsSynced() {
   const version = String(pkg.version);
   const readmePath = path.join(REPO_ROOT, 'README.md');
-  const checkpointPath = path.join(REPO_ROOT, 'docs', '00-项目', 'CHECKPOINT.md');
 
   let readme;
   try {
@@ -39,24 +43,7 @@ function checkDocsSynced() {
     process.exit(1);
   }
 
-  let checkpoint;
-  try {
-    checkpoint = fs.readFileSync(checkpointPath, 'utf8');
-  } catch (err) {
-    console.error('[version-guard] 无法读取 CHECKPOINT.md:', (err && err.message) || err);
-    process.exit(1);
-  }
-  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const cellRe = new RegExp('\\|\\s*\\*\\*当前版本\\*\\*\\s*\\|\\s*`' + escaped + '`');
-  if (!cellRe.test(checkpoint)) {
-    console.error(
-      `[version-guard] CHECKPOINT.md 未同步：当前版本单元格必须以 \`${version}\` 开头` +
-        `（| **当前版本** | \`${version}\`）`,
-    );
-    process.exit(1);
-  }
-
-  console.log(`[version-guard] docs OK：README/CHECKPOINT 与 package.json ${version} 一致`);
+  console.log(`[version-guard] docs OK：README 与 package.json ${version} 一致`);
 }
 
 function git(cmd) {

@@ -10,11 +10,12 @@ packages:
 
 # pnpm 11：构建脚本白名单（allowBuilds 取代 v10 的 onlyBuiltDependencies）。
 # electron 的 postinstall 负责下载 Electron 二进制，必须放行。
+# esbuild 的 postinstall 负责落地平台二进制（tsx 依赖它），未放行会让 pnpm 以
+# ERR_PNPM_IGNORED_BUILDS 退出 1，连带挡住 `pnpm run verify`。
 allowBuilds:
   electron: true
   node-pty: true
-  koffi: true
-  esbuild: set this to true or false
+  esbuild: true
 
 # 关闭 peer 自动补装：避免为不存在的公网 peer 链报 404。
 autoInstallPeers: false
