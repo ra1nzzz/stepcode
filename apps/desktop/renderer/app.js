@@ -270,6 +270,8 @@
     turnBusy: null,
     /** 刚停止的回合。主区据此留一行落点，而不是忙态一清就什么都不剩。 */
     turnStopped: null,
+    /** 刚完成的回合。主区据此留一个完成瞬间，而不是状态行直接消失。 */
+    turnDone: null,
     // P1.3 任务监控自动浮出：ctxAutoOpened=本回合自动开过（仅此种情况才自动关）、
     // ctxAutoToggled=用户在本回合手动调过面板（尊重手动，不再自动管理）。
     ctxAutoOpened: false, ctxAutoToggled: false,
@@ -926,21 +928,32 @@
     const running = state.turnBusy === s.id;
     const waiting = !!state.pendingConfirm;
     const stopped = state.turnStopped && state.turnStopped.id === s.id;
-    if (!running && !waiting && !stopped) return '';
+    const doneTurn = state.turnDone && state.turnDone.id === s.id;
+    if (!running && !waiting && !stopped && !doneTurn) return '';
     const done = live.filter((t) => t.ph === 'done').length;
     const current = [...live].reverse().find((t) => t.ph !== 'done') || live[live.length - 1];
     // 步骤只有名字和结果，没有「为什么」。不编造原因，只把已有的两段显式标出来。
     const doing = current ? (current.n || '工具') : (waiting ? '一个需要你确认的动作' : '组织回复');
     const outcome = current && current.result ? String(current.result) : '';
-    const label = stopped ? '已停止' : (waiting ? '等待确认' : '正在进行');
-    const tone = stopped ? 'stop' : (waiting ? 'wait' : 'run');
+    const label = doneTurn && !running ? '已完成' : (stopped ? '已停止' : (waiting ? '等待确认' : '正在进行'));
+    const tone = doneTurn && !running ? 'done' : (stopped ? 'stop' : (waiting ? 'wait' : 'run'));
     const progress = live.length ? `${done}/${live.length}` : '';
     return `<div class="turn-strip ${tone}" role="status">
       <span class="turn-label">${label}</span>
-      <span class="turn-reason">${stopped ? '这一回合已停止，可以修改后再发送' : '在做 ' + esc(doing)}</span>
+      <span class="turn-reason">${doneTurn && !running ? '这一回合已完成' : (stopped ? '这一回合已停止，可以修改后再发送' : '在做 ' + esc(doing))}</span>
       ${!stopped && outcome ? `<span class="turn-outcome">${esc(outcome)}</span>` : ''}
       ${progress ? `<span class="turn-progress">${progress}</span>` : ''}
     </div>`;
+  }
+
+  /** 会话页的记忆一行。没有统计就不渲染，避免空话。 */
+  function renderMemoryLine() {
+    const stats = state.memory && state.memory.stats;
+    if (!stats) return '';
+    const total = ['global', 'project', 'director', 'worker']
+      .reduce((n, k) => n + (typeof stats[k] === 'number' ? stats[k] : 0), 0);
+    if (!total) return '';
+    return `<div class="memory-line">记得 ${total} 条：项目 ${Number(stats.project) || 0} · 全局 ${Number(stats.global) || 0}</div>`;
   }
 
   function renderMsg(m, sid) {
@@ -1514,6 +1527,7 @@
       return `<div style="flex:1;overflow-y:auto" id="msgScroll">
         <div style="max-width:760px;margin:0 auto;padding:18px 16px 10px">
           ${renderTurnStrip(s)}
+          ${renderMemoryLine()}
           <div class="row" style="justify-content:space-between;margin-bottom:4px">
             <div class="row"><b class="sess-title">${esc(s.title)}</b>
               <span class="badge info">${esc(s.expert)}</span></div>
@@ -2091,7 +2105,9 @@
       const ddOk = state.dataDirInventory && state.dataDirInventory.ok && state.dataDirInventory.dir;
       const ddShort = ddOk ? String(state.dataDirInventory.dir).replace(/\\/g, '/').split('/').filter(Boolean).slice(-2).join('/') : '';
       const rtOk = state.pluginRuntime && state.pluginRuntime.ready;
-      return `<div class="main-inner"><h1 class="pg">设置</h1><div class="pg-sub">模型、沙箱、授权、桌面集成等能力均以插件形式挂载，在此统一管理。</div>
+      const sectionNames = { model: '模型', sandbox: '沙箱与授权', prompt: '提示词', desktop: '桌面集成', memory: '记忆', data: '数据', about: '关于' };
+      const here = sectionNames[state.settingsSection] || '模型';
+      return `<div class="main-inner"><h1 class="pg">偏好</h1><div class="pg-sub">当前：${here}。模型、沙箱、授权、桌面集成都在这一页。</div>
         <div class="statbar">
           <div class="stat"><div class="sk">授权模式</div><div class="sv"><span class="dot" style="background:${authModeDotColor()}"></span>${authModeLabel(state.authMode)}${state.authzLoaded ? '' : ' · 未接入'}</div></div>
           <div class="stat"><div class="sk">沙箱</div><div class="sv">${state.sandbox.mode ? `<span class="badge ok" style="font-weight:600">Windows ACL · ${esc(state.sandbox.mode)}</span>` : '<span class="badge">未接入</span>'}</div></div>
@@ -2944,6 +2960,7 @@
     state.toolSteps[s.id] = [];
     state.turnBusy = s.id;
     if (state.turnStopped && state.turnStopped.id === s.id) state.turnStopped = null;
+    if (state.turnDone && state.turnDone.id === s.id) state.turnDone = null;
     // P1.3：轻模式回合开始自动浮出任务监控（project 态常驻）。
     // 语义与 spec「回合中浮出 / 结束 5s 收起 / 用户可钉住」对齐：
     //   · ctxAutoOpened = 本回合由自动浮出打开 → 才参与结束 5s 后的自动收起；
@@ -2971,6 +2988,7 @@
       render(); // 回合结束刷新侧栏标题/待办；工具步骤过程中不走全页 render
       // typing 消息已被静态消息替换（tools 已随消息落库展示），live 轨迹不再需要
       delete state.toolSteps[s.id];
+      if (!(res && res.aborted)) state.turnDone = { id: s.id, at: Date.now() };
       if (res && res.aborted) {
         state.turnStopped = { id: s.id, at: Date.now() };
         toast('已停止生成', 'warn');
