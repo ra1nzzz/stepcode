@@ -159,6 +159,64 @@ process.exit(0);
     }
   });
 
+  await check('归一化：参数超限判失败，不静默截断', () => {
+    // 原实现先 .slice(0, MAX_ARGS) 再判 args.length > MAX_ARGS，条件恒假：
+    // 超限配置被裁到上限并回 ok:true，用户看到「保存成功」而参数少了一截。
+    const many = Array.from({ length: 400 }, (_, i) => `--a${i}`);
+    const r = MCP.normalizeMcpConfig({ id: 'big', command: 'npx', args: many });
+    assert(r.ok === false, `400 个参数应判失败，实际 ${JSON.stringify(r).slice(0, 120)}`);
+    assert(/参数过多/.test(r.reason), `reason 应说明参数过多，实际 ${r.reason}`);
+  });
+
+  await check('子进程先退出：握手干净失败，且没有异常逃逸到进程顶层', async () => {
+    // 这条只断言「不崩溃 + 干净失败」，**不是** stdin 监听器的反证：
+    // 把两处 `child.stdin.on('error')` 删掉后本用例仍为绿（本机实测，见审阅记录）。
+    // Windows 上向已关闭的读端写入得到的是静默 EOF 而不是 EPIPE 'error' 事件，
+    // 所以这里构造不出可观测的异步 error。监听器本身按 Node 语义与
+    // terminal-pty.ts:321 的既有规矩保留，属防御性修复，未被判红。
+    // 服务端回完 initialize 就 destroy stdin，客户端紧接着写 notifications/initialized
+    // 必然拿到 EPIPE。那是 stdin 流上的异步 'error' 事件，外层 try/catch 抓不到：
+    // 没有监听器时 Node 抛成 uncaughtException，打包态 main.ts 会 process.exit(1)。
+    const deadServer = `
+const readline = require('readline');
+const rl = readline.createInterface({ input: process.stdin, terminal: false });
+rl.on('line', (line) => {
+  let m; try { m = JSON.parse(line); } catch { return; }
+  if (m.method === 'initialize') {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: { name: 'dead', version: '0' } } }) + '\\n');
+    rl.close();
+    process.stdin.destroy();   // 读端当场关闭，下一次写必然 EPIPE
+  }
+});
+`;
+    const probeServer = path.join(os.tmpdir(), `orchdesk-mcp-dead-${Date.now()}.cjs`);
+    fs.writeFileSync(probeServer, deadServer, 'utf8');
+    const probe = `
+const path = require('path');
+process.on('uncaughtException', (e) => { console.log('UNCAUGHT:' + (e && e.message)); process.exit(2); });
+const MCP = require(${JSON.stringify(path.join(__dirname, 'dist', 'mcp-client.js'))});
+(async () => {
+  const r = await MCP.connectMcpServer({ id: 'dead', name: 'dead', transport: 'stdio', command: process.execPath, args: [${JSON.stringify(probeServer)}], enabled: true }, { initTimeoutMs: 6000 });
+  console.log('RESULT_JSON:' + JSON.stringify({ connected: r.connected, reason: String(r.reason || '') }));
+  process.exit(0);
+})().catch((e) => { console.log('ERR:' + e.message); process.exit(1); });
+`;
+    const probeFile = path.join(os.tmpdir(), `orchdesk-mcp-epipe-${Date.now()}.cjs`);
+    fs.writeFileSync(probeFile, probe, 'utf8');
+    let out = '';
+    try {
+      out = require('node:child_process').execSync(`node "${probeFile}"`, { encoding: 'utf-8', timeout: 30_000 });
+    } catch (err) {
+      out = (err.stdout || '') + (err.stderr || '');
+    } finally {
+      try { fs.unlinkSync(probeFile); } catch { /* 临时探针 */ }
+    }
+    assert(!/UNCAUGHT:/.test(out), `stdin 的 EPIPE 逃成了 uncaughtException：${out.slice(0, 200)}`);
+    assert(/RESULT_JSON:/.test(out), `探针没有产出结果：${out.slice(0, 200)}`);
+    const r = JSON.parse(out.match(/RESULT_JSON:(\{.*\})/)[1]);
+    assert(r.connected === false, '握手不该成功（服务端已关闭读端）');
+  });
+
   console.log('\n' + log.join('\n'));
   console.log(`\n结果：通过 ${passed} / 失败 ${failed}\n`);
   process.exit(failed ? 1 : 0);

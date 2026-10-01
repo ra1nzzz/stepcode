@@ -160,6 +160,98 @@ const cred = require('./dist/credentials.js');
     assert.strictEqual(probe.readOk, true, 'models-get 应能正常返回');
   });
 
+  console.log('== B2. models-save 的四条写入守卫（真实 handler 探针）==');
+
+  const HOME2 = fs.mkdtempSync(path.join(os.tmpdir(), 'orchdesk-models-'));
+  const script2 = `
+    const Module = require('module');
+    const path = require('path'), fs = require('fs'), os = require('os');
+    const HOME = ${JSON.stringify(HOME2)};
+    process.env.ORCHDESK_HOME = HOME;
+    const { makeElectronStub } = require(${JSON.stringify(path.join(__dirname, '..', '..', 'scripts', 'verify-kit.cjs'))});
+    const stub = makeElectronStub({
+      home: HOME,
+      getPath: (n) => n === 'appData' ? path.join(HOME, 'ad') : path.join(HOME, 'st', n),
+    });
+    const ipc = stub.ipcHandlers;
+    const orig = Module._load;
+    Module._load = function (req) { if (req === 'electron') return stub; return orig.apply(this, arguments); };
+    require('${path.join(__dirname, 'dist', 'main.js').replace(/\\/g, '\\\\')}');
+    (async () => {
+      const FILE = path.join(HOME, 'models.json');
+      const save = (cfg) => ipc.get('orchdesk:models-save')(null, cfg);
+      const prov = (id, name) => ({ id, name, type: 'openai-compatible', baseUrl: 'http://' + id + '/v1', models: ['m-' + id] });
+      const read = () => { try { return JSON.parse(fs.readFileSync(FILE, 'utf-8')); } catch { return null; } };
+      const out = {};
+
+      out.good = await save({ providers: [prov('a', 'A'), prov('b', 'B')], defaultProvider: 'a', defaultModel: 'm-a', maxToolIterations: 5 });
+      out.goodCount = (read()?.providers || []).length;
+
+      // 1) 重复 id：投影端按 id 建对象（后写胜出）、读取端 find（先写胜出），
+      //    而渲染层用显示名造 id —— 两个纯中文名会折叠成同一个 '--'。
+      out.dup = await save({ providers: [prov('z', '第一个'), prov('z', '第二个')] });
+      out.dupCount = (read()?.providers || []).length;
+
+      // 2) 空 / 纯空白 id
+      out.blank = await save({ providers: [{ ...prov('   ', '空白'), }] });
+
+      // 3) 文件读坏时不得以「空配置」为基底落盘
+      fs.writeFileSync(FILE, '{ 这不是合法 json', 'utf-8');
+      out.corrupt = await save({ providers: [prov('a', 'A')] });
+      out.corruptBytes = fs.readFileSync(FILE, 'utf-8');
+
+      // 4) 文件修好后同一通道要能正常保存（守卫不能把产品钉死）
+      fs.writeFileSync(FILE, JSON.stringify({ providers: [prov('a', 'A')] }), 'utf-8');
+      out.recovered = await save({ providers: [prov('a', 'A'), prov('b', 'B')] });
+      out.recoveredCount = (read()?.providers || []).length;
+
+      console.log('RESULT2_JSON:' + JSON.stringify(out));
+      process.exit(0);
+    })().catch((e) => { console.log('ERR:' + e.message); process.exit(1); });
+  `;
+  const tmp2 = path.join(os.tmpdir(), `models-guard-${Date.now()}.cjs`);
+  fs.writeFileSync(tmp2, script2, 'utf-8');
+  let probe2Out = '';
+  try {
+    probe2Out = require('node:child_process').execSync(`node "${tmp2}"`, { encoding: 'utf-8', timeout: 60_000 });
+  } catch (err) {
+    probe2Out = (err.stdout || '') + (err.stderr || '');
+  } finally {
+    try { fs.unlinkSync(tmp2); } catch {}
+  }
+  const m2 = probe2Out.match(/RESULT2_JSON:(\{.*\})/);
+  const g = m2 ? JSON.parse(m2[1]) : null;
+
+  await check('正常保存先立基线（2 个提供商落盘）', () => {
+    assert.ok(g, '探针未产出结果: ' + probe2Out.slice(0, 400));
+    assert.strictEqual(g.good.ok, true, `正常保存应成功，实际 ${JSON.stringify(g.good)}`);
+    assert.strictEqual(g.goodCount, 2, '基线应为 2 个提供商');
+  });
+
+  await check('重复提供商 id 被拒绝，且磁盘配置没被动过', () => {
+    assert.strictEqual(g.dup.ok, false, `重复 id 必须拒绝，实际 ${JSON.stringify(g.dup)}`);
+    assert.match(String(g.dup.reason), /重复/);
+    assert.strictEqual(g.dupCount, 2, '被拒之后提供商数量必须还是 2（拒绝要真的没写）');
+  });
+
+  await check('空 / 纯空白提供商 id 被拒绝', () => {
+    assert.strictEqual(g.blank.ok, false, `空白 id 必须拒绝，实际 ${JSON.stringify(g.blank)}`);
+    assert.match(String(g.blank.reason), /id 不能为空/);
+  });
+
+  await check('models.json 读坏时中止保存，不把已有配置清成空表', () => {
+    assert.strictEqual(g.corrupt.ok, false, `损坏文件必须拒绝保存，实际 ${JSON.stringify(g.corrupt)}`);
+    assert.match(String(g.corrupt.reason), /读取失败/);
+    assert.strictEqual(g.corruptBytes, '{ 这不是合法 json', '损坏原文必须原样留着（旧实现会写成空 providers）');
+  });
+
+  await check('文件修好后同一通道恢复可写（守卫不钉死产品）', () => {
+    assert.strictEqual(g.recovered.ok, true, `恢复后应能保存，实际 ${JSON.stringify(g.recovered)}`);
+    assert.strictEqual(g.recoveredCount, 2, '恢复保存应落 2 个提供商');
+  });
+
+  try { fs.rmSync(HOME2, { recursive: true, force: true }); } catch {}
+
   try { fs.rmSync(HOME, { recursive: true, force: true }); } catch {}
 
   console.log('== C. 沙箱日志（PRD FR-8 可检索）==');
