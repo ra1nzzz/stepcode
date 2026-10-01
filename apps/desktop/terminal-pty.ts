@@ -370,6 +370,21 @@ export function killTerminal(id: string): boolean {
   return true;
 }
 
+/**
+ * 退出时关掉全部 PTY 子进程。`before-quit` 原先只注销快捷键、销毁悬浮窗和刷沙箱日志，
+ * Windows 上于是留下 cmd.exe / ConPTY 孤儿——用户再启动就是「上一个还没退」。
+ * 返回关掉的会话数，供调用方落一行可见的记录。
+ */
+export function closeAllTerminals(): number {
+  let killed = 0;
+  for (const id of [...sessions.keys()]) {
+    try {
+      if (killTerminal(id)) killed += 1;
+    } catch { /* 单个 kill 失败不该拖住其余会话和退出流程 */ }
+  }
+  return killed;
+}
+
 /** 全量状态（渲染层 Tab 栏渲染数据源；含回放缓冲）。 */
 export function getTerminalState(): {
   ptyAvailable: boolean;

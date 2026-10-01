@@ -14,6 +14,9 @@ export interface DataOpsIpcDeps {
 }
 
 /** 数据目录快照（排除 snapshots 自身，防递归）。 */
+/** 快照保留份数。此前一次都不删，而且过去的复制根本没成功过（见 snapshotData）。 */
+const SNAPSHOT_KEEP = 3;
+
 function snapshotData(deps: DataOpsIpcDeps): { ok: boolean; dir?: string; reason?: string } {
   try {
     const root = deps.dataDir();
@@ -21,11 +24,59 @@ function snapshotData(deps: DataOpsIpcDeps): { ok: boolean; dir?: string; reason
     const snapshotsDir = path.join(root, 'snapshots');
     const snapDir = path.join(snapshotsDir, stamp);
     fs.mkdirSync(snapDir, { recursive: true });
-    fs.cpSync(root, snapDir, { recursive: true, filter: (src) => src === root || !src.startsWith(snapshotsDir) });
+    // 不能用 fs.cpSync(root, snapDir)：目标就在源里面，Node 直接抛
+    // 「Cannot copy ... to a subdirectory of self」，filter 挡不住这个前置判断。
+    // 过去没有用例碰过这里，于是「更新前自动备份」每次启动都静默失败。
+    copyTree(root, snapDir, snapshotsDir);
+    pruneSnapshots(snapshotsDir);
     return { ok: true, dir: snapDir };
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
+}
+
+/** 逐条递归复制，跳过快照目录自身；符号链接不跟随（防环）。 */
+function copyTree(src: string, dst: string, skip: string): void {
+  const resolvedSkip = path.resolve(skip);
+  const walk = (from: string, to: string): void => {
+    for (const name of fs.readdirSync(from)) {
+      const fromPath = path.join(from, name);
+      const toPath = path.join(to, name);
+      if (path.resolve(fromPath) === resolvedSkip) continue;
+      const st = fs.lstatSync(fromPath);
+      if (st.isDirectory()) {
+        fs.mkdirSync(toPath, { recursive: true });
+        walk(fromPath, toPath);
+      } else if (st.isFile()) {
+        fs.copyFileSync(fromPath, toPath);
+      }
+    }
+  };
+  fs.mkdirSync(dst, { recursive: true });
+  walk(src, dst);
+}
+
+/**
+ * 目录名是 ISO 戳（`2026-10-01T07-00-00`），字典序即时间序，所以按名字排序就够，
+ * 不必读 mtime（复制会把 mtime 带成源文件的时刻，不可信）。
+ * 删除失败不影响本次快照已经成立。
+ */
+function pruneSnapshots(snapshotsDir: string): number {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(snapshotsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch {
+    return 0;
+  }
+  const stale = entries.sort().reverse().slice(SNAPSHOT_KEEP);
+  for (const name of stale) {
+    try {
+      fs.rmSync(path.join(snapshotsDir, name), { recursive: true, force: true });
+    } catch { /* 删不掉就留给下一次，不能因此把快照报成失败 */ }
+  }
+  return stale.length;
 }
 
 /** 更新前必须完成数据快照（PLAN 红线：不要更新后补）。 */

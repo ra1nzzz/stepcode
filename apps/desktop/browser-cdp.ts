@@ -22,6 +22,7 @@
 import { BrowserWindow, nativeImage } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { isBlockedHost } from './host-services';
 import {
   BROWSER_NO_ELEMENT,
   BROWSER_PAGES_MAX,
@@ -238,8 +239,31 @@ function ensureWindow(): BrowserWindow {
     if (win === w) { win = null; attached = false; }
     emit();
   });
+  // 重定向与页内跳转要过同一道主机门。`ipc-browser.ts:69` 只挡初始 URL：
+  // 一个公网地址 302 到 `http://169.254.169.254/` 就绕过了一切，页面正文还能经
+  // browser_text / 截图取回来。`tool-exec.ts` 的 web_fetch 每一跳都复检，这里对齐。
+  // Electron 给这两个事件的签名是 (event, url)，不是带 url 属性的对象。
+  const guardNavigation = (e: Electron.Event, target: string) => {
+    if (!isBlockedHost(String(target || ''))) return;
+    e.preventDefault();
+    lastError = `跳转被拦（${target || '空地址'}）`;
+    emit();
+  };
+  w.webContents.on('will-redirect', guardNavigation);
+  w.webContents.on('will-navigate', guardNavigation);
   win = w;
   return w;
+}
+
+/** 退出时销毁浏览器窗：不留孤立的 Chromium 进程。 */
+export function destroyBrowserWindow(): void {
+  const w = win;
+  if (!w) return;
+  try {
+    if (!w.isDestroyed()) w.destroy();
+  } catch { /* 已经没了就是没成功也不算错 */ }
+  win = null;
+  attached = false;
 }
 
 /** 给 promise 加超时：CDP 在 target 不可用时既不返回也不报错，只有超时能救。 */

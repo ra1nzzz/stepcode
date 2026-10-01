@@ -71,6 +71,8 @@ import { abortStepSession, hasActiveStepTurn, resetStepSessionCache, runStepSess
 import { executeTool, initToolExec, sessionCwd, setSessionCwd } from './tool-exec';
 import { registerBrowserIpc } from './ipc-browser';
 import { preloadTerminalPty, registerTerminalIpc } from './ipc-terminal';
+import { closeAllTerminals } from './terminal-pty';
+import { destroyBrowserWindow } from './browser-cdp';
 import { registerFilePanelIpc } from './ipc-file-panel';
 import { connectorsFilePath, initConnectors, loadConnectors, registerConnectorIpc } from './ipc-connectors';
 import { initMcp, loadMcp, mcpFilePath, registerMcpIpc } from './ipc-mcp';
@@ -1400,6 +1402,15 @@ app.on('before-quit', () => {
   // 注销全局快捷键：不注销会在进程退出后残留加速器（Windows 上表现为快捷键失灵）
   try { globalShortcut.unregisterAll(); } catch { /* 忽略 */ }
   bootDesktop.destroyFloatingWindow();
+  // PTY 子进程与浏览器窗要在退出前收掉：Windows 上原先会留下 cmd.exe / ConPTY 孤儿
+  // 和一个隐藏的 Chromium 窗口，下次启动像「上一个还没退」。
+  try {
+    const killed = closeAllTerminals();
+    if (killed) log('INFO', 'terminal', `退出前关闭 ${killed} 个终端会话`);
+  } catch (err) { log('WARN', 'terminal', `退出前关闭终端失败：${(err as Error).message}`); }
+  try {
+    destroyBrowserWindow();
+  } catch (err) { log('WARN', 'browser', `退出前销毁浏览器窗失败：${(err as Error).message}`); }
   // 沙箱日志 dirty flush（治理项⑥）：合并写未到期时退出不能丢尾部判定
   try { flushSandboxLog(); } catch { /* 忽略 */ }
   // 触发全部插件的逆效应（卸载无残留）

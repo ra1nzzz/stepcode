@@ -446,6 +446,21 @@ function makeFakeChild() {
     assert.strictEqual(st.count, 0, '套件内创建的会话已全部清理');
   });
 
+  await check('closeAllTerminals：退出前清空会话表并如实计数（守卫反证）', () => {
+    // before-quit 原先不关 PTY：Windows 上退出后留下 cmd.exe / ConPTY 孤儿。
+    // 这条断言的是「表真的空了 + kill 数对得上 + 重复调用幂等」，不是函数存在。
+    const startCount = tp.getTerminalState().count;
+    const r = tp.createTerminal({ cwd: 'D:/proj' }, mkOpts());
+    assert.strictEqual(r.ok, true, JSON.stringify(r));
+    const afterCreate = tp.getTerminalState().count;
+    assert.strictEqual(afterCreate, startCount + 1, `创建后应多一个会话，实际 ${afterCreate}`);
+
+    const killed = tp.closeAllTerminals();
+    assert.strictEqual(killed, afterCreate, `应报出关掉 ${afterCreate} 个，实际 ${killed}`);
+    assert.strictEqual(tp.getTerminalState().count, 0, '会话表必须清空');
+    assert.strictEqual(tp.closeAllTerminals(), 0, '重复调用应为 0（幂等）');
+  });
+
   const ok = summary('终端 PTY 全部验证通过');
   process.exit(ok ? 0 : 1);
 })().catch((err) => {

@@ -198,6 +198,29 @@ const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf-8'));
     fs.rmSync(IMPORT_FILE, { force: true });
   } catch { /* 尽力而为 */ }
 
+  await check('快照只留最新 3 份：磁盘不能只增不减（守卫反证）', async () => {
+    // snapshotData 原先一次都不删：每天启动多拷一份全量数据目录，
+    // 会话日志与浏览器截图按天数累加，终局是同步复制把主进程钉死。
+    const snapRoot = path.join(HOME, 'snapshots');
+    fs.rmSync(snapRoot, { recursive: true, force: true });
+    fs.mkdirSync(snapRoot, { recursive: true });
+    const seeded = ['2026-01-01T00-00-00', '2026-01-02T00-00-00', '2026-01-03T00-00-00', '2026-01-04T00-00-00', '2026-01-05T00-00-00'];
+    for (const n of seeded) {
+      fs.mkdirSync(path.join(snapRoot, n), { recursive: true });
+      fs.writeFileSync(path.join(snapRoot, n, 'marker'), n, 'utf-8');
+    }
+
+    const r = await h('orchdesk:check-updates')(null);
+    assert.ok(r && r.snapshot && r.snapshot.ok, `快照应成功：${JSON.stringify(r).slice(0, 200)}`);
+
+    const left = fs.readdirSync(snapRoot).sort();
+    assert.ok(left.length <= 3, `快照最多留 3 份，实际 ${left.length}：${left.join(', ')}`);
+    assert.ok(!left.includes(seeded[0]), '最旧的一份必须真的被删掉');
+    assert.ok(!left.includes(seeded[1]), '第二旧的一份必须真的被删掉');
+    assert.ok(left.includes(seeded[4]), `较新的一份要留着，实际留下 ${left.join(', ')}`);
+    assert.ok(left.includes(r.snapshot.dir.split(path.sep).pop()), '本次新建的快照本身不能被删');
+  });
+
   console.log('\n数据导出/导入闭环验证');
   const ok = summary();
   process.exit(ok ? 0 : 1);
