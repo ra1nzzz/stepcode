@@ -1,3 +1,11 @@
+---
+id: ytpx-ytpx-skill-v1-1-spec-workspace-spec-md
+type: spec
+status: draft
+updated: 2026-10-01
+source: YTPX-Skill-v1.1
+---
+
 
 # Workspace Specification
 

@@ -1,3 +1,11 @@
+---
+id: ytpx-ytpx-skill-v1-1-anti-patterns-anti-pattern-library-md
+type: anti-patterns
+status: draft
+updated: 2026-10-01
+source: YTPX-Skill-v1.1
+---
+
 
 # YTPX Anti Pattern Library
 

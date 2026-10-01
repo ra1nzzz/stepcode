@@ -35,6 +35,7 @@ updated: 2026-09-30
 同层其余权威页：
 
 - [检查点](00-项目/检查点.md)
+- [YTPX 设计评审方法包](40-质量/YTPX/YTPX-Skill-v1.1/SKILL.md)（`40-质量/YTPX/`，24 个文件：SPEC / RULES / SCHEMAS / TOKENS / CHECKLIST / ANTI-PATTERNS / REVIEW）。它是**方法论包，不是 stepcode 的产品需求**；放在知识库层内是记录位置的决定，见 [冲突裁决](00-项目/冲突裁决.md)
 - [可恢复基线](00-项目/可恢复基线.md)
 - [术语](00-项目/术语.md)
 - [责任边界](00-项目/责任边界.md)

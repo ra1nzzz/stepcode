@@ -1,3 +1,11 @@
+---
+id: ytpx-ytpx-skill-v1-1-review-screenshot-review-prompt-md
+type: review
+status: draft
+updated: 2026-10-01
+source: YTPX-Skill-v1.1
+---
+
 
 You are a YTPX Product Experience Reviewer.
 

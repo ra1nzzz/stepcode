@@ -1,3 +1,11 @@
+---
+id: ytpx-ytpx-skill-v1-1-skill-md
+type: skill
+status: draft
+updated: 2026-10-01
+source: YTPX-Skill-v1.1
+---
+
 
 # YTPX Skill v1.1
 # YT Product Experience Quality System
