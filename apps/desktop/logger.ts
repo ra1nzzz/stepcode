@@ -102,6 +102,45 @@ export function mirrorConsole(): void {
 }
 
 /** 模型调用结构化埋点（脱敏：URL 不含 key，错误正文截断）。 */
+
+/**
+ * BUG-055：日志里不能带凭据。两类来源：
+ *   · 用户把密钥写在 baseUrl 的查询串或 userinfo 里（Azure 风格 `?api-key=`、网关 `?key=`、
+ *     `https://user:pass@host`）——`buildRequest` 会原样保留查询串并交给 `logModel({url})`；
+ *   · 上游错误文本常常回显完整请求 URL（4xx 尤其如此），所以任意 `error` 字符串也要过一遍。
+ * 日志文件在数据目录里、随快照与备份一起走，泄进去就等于泄到备份介质上。
+ */
+const SECRET_KEY_RE = /(api[-_]?key|apikey|access[-_]?key|secret|token|password|passkey|signature|(^|[^a-z])sig($|[^a-z]))/i;
+const SECRET_PAIR_RE = /([?&](?:api[-_]?key|apikey|access[-_]?key|secret|token|password|signature|key)=)([^&\s"'`)]{1,})(?=&|\s|["'`)]|$)/gi;
+
+/** 擦掉 URL 里的凭据成分；没有可擦的东西时原样返回（不破坏可读性）。 */
+export function redactUrlForLog(input: unknown): string {
+  const raw = typeof input === 'string' ? input : String(input ?? '');
+  if (!raw) return raw;
+  try {
+    const u = new URL(raw);
+    let touched = false;
+    if (u.username) { u.username = 'REDACTED'; touched = true; }
+    if (u.password) { u.password = 'REDACTED'; touched = true; }
+    const hit: string[] = [];
+    u.searchParams.forEach((_v, k) => { if (SECRET_KEY_RE.test(k) || /(^|[^a-z])key($|[^a-z])/i.test(k)) hit.push(k); });
+    if (hit.length) {
+      for (const k of hit) u.searchParams.set(k, 'REDACTED');
+      touched = true;
+    }
+    return touched ? u.toString() : raw;
+  } catch {
+    return raw.replace(SECRET_PAIR_RE, '$1REDACTED');
+  }
+}
+
+/** 任意文本（多为错误消息）里的 `?key=值` 形态一并擦掉。 */
+export function redactTextForLog(input: unknown): string {
+  const raw = typeof input === 'string' ? input : String(input ?? '');
+  if (!raw) return raw;
+  return raw.replace(SECRET_PAIR_RE, '$1REDACTED');
+}
+
 export function logModel(event: 'request' | 'response' | 'error', detail: {
   provider: string;
   model: string;
@@ -117,12 +156,12 @@ export function logModel(event: 'request' | 'response' | 'error', detail: {
     detail.provider,
     detail.model,
     detail.apiMode,
-    detail.url,
+    detail.url ? redactUrlForLog(detail.url) : undefined,
     detail.status !== undefined ? `HTTP ${detail.status}` : undefined,
     detail.ms !== undefined ? `${detail.ms}ms` : undefined,
     detail.contentLen !== undefined ? `content ${detail.contentLen} chars` : undefined,
     detail.toolCalls !== undefined ? `${detail.toolCalls} tool_calls` : undefined,
-    detail.error ? `ERROR: ${String(detail.error).slice(0, 300)}` : undefined,
+    detail.error ? `ERROR: ${redactTextForLog(String(detail.error)).slice(0, 300)}` : undefined,
   ].filter(Boolean);
   log(event === 'error' ? 'ERROR' : 'INFO', 'model', parts.join(' · '));
 }

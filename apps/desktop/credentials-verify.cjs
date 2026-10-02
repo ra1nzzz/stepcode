@@ -264,6 +264,53 @@ const cred = require('./dist/credentials.js');
     assert.strictEqual(g.recoveredCount, 2, '恢复保存应落 2 个提供商');
   });
 
+  // ---- BUG-055：日志不得带出凭据 ----
+  const LG = require(path.join(__dirname, 'dist', 'logger.js'));
+  await check('redactUrlForLog：查询串凭据、userinfo 与错误文本都被擦掉', () => {
+    const secret = 'SK-LEAK-1234567890';
+    const a = LG.redactUrlForLog(`https://api.example.com/v1/chat/completions?api-key=${secret}`);
+    assert.ok(!a.includes(secret), `URL 查询串里的 key 必须被擦掉：${a}`);
+    assert.ok(a.includes('REDACTED'), `要留可见标记，不能静默删参数：${a}`);
+    const b = LG.redactUrlForLog(`https://ai:${secret}@gateway.example/v1`);
+    assert.ok(!b.includes(secret), `userinfo 口令必须被擦掉：${b}`);
+    const c = LG.redactTextForLog(`HTTP 401: bad auth for https://x.dev/v1?api-key=${secret}`);
+    assert.ok(!c.includes(secret), `错误文本回显的 URL 也要擦：${c}`);
+    // 不该误伤：无凭据的普通 URL 与非 key 参数原样保留
+    const d = LG.redactUrlForLog('http://127.0.0.1:11434/api/chat?stream=true&model=q');
+    assert.ok(d.includes('stream=true') && d.includes('model=q'), `普通参数不得被抹掉：${d}`);
+    assert.strictEqual(LG.redactUrlForLog(''), '');
+  });
+
+  await check('logModel 落盘后，日志文件里搜不到那把 key（往返验证）', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orchdesk-log-'));
+    const secret = 'SK-DISK-9876543210';
+    LG.initLogger(dir);
+    try {
+      LG.logModel('request', {
+        provider: 'p', model: 'm', apiMode: 'chat',
+        url: `https://api.example.com/v1/chat/completions?api-key=${secret}`,
+      });
+      LG.logModel('error', {
+        provider: 'p', model: 'm',
+        error: `upstream echoed: request to /v1/chat/completions?api-key=${secret} failed`,
+      });
+      const found = [];
+      (function walk(d) {
+        for (const n of fs.readdirSync(d)) {
+          const p2 = path.join(d, n);
+          if (fs.statSync(p2).isDirectory()) walk(p2); else found.push(fs.readFileSync(p2, 'utf-8'));
+        }
+      })(dir);
+      const all = found.join('\n');
+      assert.ok(all.length > 0, '应至少写下一个日志文件');
+      assert.ok(!all.includes(secret), `日志文件里不得出现明文 key，实际内容片段：${all.slice(0, 300)}`);
+      assert.ok(all.includes('REDACTED'), '脱敏要留下可见标记');
+    } finally {
+      LG.initLogger(fs.mkdtempSync(path.join(os.tmpdir(), 'orchdesk-log-off-'))); // initLogger 只收字符串，指到另一个临时目录即等于不再写本用例的目录
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* 尽力而为 */ }
+    }
+  });
+
   await check('默认提供商被删后自动兜底，不留悬空引用（守卫反证）', () => {
     assert.strictEqual(g.dangling.ok, true, `删除保存本身应成功：${JSON.stringify(g.dangling)}`);
     assert.strictEqual(g.danglingDefault, 'b',
