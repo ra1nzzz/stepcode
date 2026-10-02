@@ -546,17 +546,19 @@ function scanRule(rule, code, fileName) {
     const loaded = new Set();
     for (const s of suites) {
       for (const d of specsOf(s)) loaded.add(d);
-      const distRe = /dist[\\/]+([A-Za-z0-9._-]+)\.js/g;
+      // 套件引用编译产物有两种写法：字面量 'dist/x.js' 与 path.join(DIST_DIR, 'x.js')。只认前者
+      // 会把「被套件加载」的模块误判成孤儿，R24 的豁免正控于是与真实加载态悄悄错开——
+      // event-emit 簇就同时踩了这两处：豁免说它没套件，链上其实挂着 event-emit-verify.cjs。
+      const distRe = /dist[\\/]+([A-Za-z0-9._-]+)\.js|DIST_DIR,\s*["']([A-Za-z0-9._-]+)\.js["']/g;
       let m;
       while ((m = distRe.exec(read(s)))) {
-        const c = path.join(APP_DIR, m[1] + '.ts');
+        const c = path.join(APP_DIR, (m[1] || m[2]) + '.ts');
         if (fs.existsSync(c)) loaded.add(c);
       }
     }
 
     // 豁免必须带理由；新增豁免要连同缺陷条目一起写。
     const UNWIRED = {
-      'event-emit.ts': 'BUG-035：canonical 事件发射与 SSE/WS 消费者整簇未接线（CHANGELOG 的 phase8 遗留，主进程不引用、docs 不声称）',
       'preload.ts': '由 webPreferences.preload 以路径字符串引用，不是静态 import，可达性扫不到（属真在用）',
     };
     const orphans = allTs.filter((f) => !reachable.has(f) && !loaded.has(f))
