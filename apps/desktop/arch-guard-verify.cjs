@@ -649,6 +649,65 @@ function scanRule(rule, code, fileName) {
     assert(hits.length === 0, `界面在宣称主进程不提供的行为：\n${hits.join('\n')}`);
   });
 
+  // ---------------- R27：preload 暴露的每个通道，主进程侧必须真有实现点 ----------------
+  // BUG-042：IPC 三向一致性此前只有测量（2026-10-02 量过：注册 127 / 暴露 121 / 调用点 115，
+  // 四类差集逐条否证为缺陷），没有门禁。R8a/R8b 管的是「渲染层调的方法是否存在」与
+  // 「preload 方法有没有人用」，都不管「preload 桥的通道主进程到底有没有实现」——
+  // 漏了那一头，渲染层调用会得到一个永远不会被应答的通道，表现成静默失败。
+  await check('R27 preload 暴露的通道在主进程侧都有注册或推送点', () => {
+    const preloadSrc = read(path.join(APP_DIR, 'preload.ts'));
+    // preload 的方法是对象字面量里的 `name: (…) => ipcRenderer.invoke('chan', …)`，
+    // 返回类型标注常跨行，逐行正则解析不到（v1/v2 就是这么造出「20 条通道必失败」的假红）。
+    // 做法：按顶层键切段，再在键向后 700 字符窗口里找它桥接的通道。
+    const exposed = new Map();
+    const keyRe = /^  ([A-Za-z0-9_]+)\s*:/gm;
+    let km;
+    while ((km = keyRe.exec(preloadSrc))) {
+      const cm = preloadSrc
+        .slice(km.index, km.index + 700)
+        .match(/ipcRenderer\s*\.\s*(?:invoke|sendSync|send|on|once)\s*\(\s*['"](orchdesk:[A-Za-z0-9._-]+)['"]/);
+      if (cm) exposed.set(cm[1], km[1]);
+    }
+    assert(exposed.size > 100,
+      `R27 扫描面塌了：只解析到 ${exposed.size} 个通道（preload 暴露 120+ 方法），先修解析器再谈结论`);
+
+    // 主进程侧的实现点有四种形态，少认任何一种都会整批假红（本轮实测踩过）：
+    // ① 字面 `ipcMain.handle/on('orchdesk:x' …)`；② 注入的门面 `ipc.handle('orchdesk:x' …)`；
+    // ③ 下行推送 `host.notify('orchdesk:x' …)` / `webContents.send(…)`；
+    // ④ 通道名先定义成常量再引用（`step-extension.ts` 的 GUI_CONFIRM_CHANNEL）。
+    // 只认「动词调用 + 字面量首参」这一形状，因此 main.ts 头部那份通道清单似注释不会被误计为实现点。
+    const implemented = new Set();
+    const callRe = /\.\s*(?:handle|on|notify|send|sendTo|sendSync)\s*\(\s*['"](orchdesk:[A-Za-z0-9._-]+)['"]/g;
+    const constRe = /(?:const|let)\s+([A-Za-z0-9_]+)\s*(?::[^=;]{0,60})?=\s*['"](orchdesk:[A-Za-z0-9._-]+)['"]/g;
+    for (const abs of desktopTsFiles()) {
+      if (path.basename(abs) === 'preload.ts') continue;
+      const raw = read(abs);
+      const code = stripComments(raw);
+      let m;
+      while ((m = callRe.exec(code))) implemented.add(m[1]);
+      while ((m = constRe.exec(code))) {
+        // 常量间接层：常量除了声明还必须被引用过，才算真有实现点。
+        const uses = (code.match(new RegExp('\\b' + m[1] + '\\b', 'g')) || []).length;
+        if (uses > 1) implemented.add(m[2]);
+      }
+    }
+    const missing = [...exposed]
+      .filter(([chan]) => !implemented.has(chan))
+      .map(([chan, api]) => `  ${api} -> ${chan}`);
+    assert(missing.length === 0,
+      `以下 preload 通道主进程侧没有任何实现点（调用必失败）：\n${missing.join('\n')}`);
+
+    // 正控：植入一个主进程没有的通道，判据必须变红——否则这条规则是空转。
+    const planted = 'orchdesk:__r27_positive_control__';
+    assert(!implemented.has(planted), 'R27 正控 1 失配：实现集合里不该有这根通道');
+    const red = [['orchdesk:__r27_positive_control__', 'plantedApi']].filter(([c]) => !implemented.has(c));
+    assert(red.length === 1, 'R27 正控 2 失配：植入的假通道没被判成缺失');
+    // 反向保护：已知在用的通道必须在实现集合里，否则是扫描器坏掉。
+    for (const must of ['orchdesk:run-agent-turn', 'orchdesk:authz-set-mode', 'orchdesk:prompt-list']) {
+      assert(implemented.has(must), `R27 反向保护失配：主进程确实在实现的 ${must} 没被扫到`);
+    }
+  });
+
   /* ---------------- R12：数据目录单源（M3）——禁止 env 直读复辟 ---------------- */
 
   await check('R12 数据目录单源：除 data-dir.ts 与 main.ts 赋值点外禁止直读 ORCHDESK_DATA_DIR', () => {
