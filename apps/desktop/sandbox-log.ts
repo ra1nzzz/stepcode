@@ -37,7 +37,7 @@ export interface SandboxLogEntry {
   decision: SandboxDecision;
   /** 拒绝或出错的原因（放行时可为空）。 */
   reason?: string;
-  /** 授权模式快照（default / trusted / paranoid）。 */
+  /** 授权模式快照（bypass / autopilot）。运行时未接入时该字段整条不写，不是写成假档位。 */
   mode?: string;
   /** 来源会话（可空：部分判定发生在会话之外）。 */
   sessionId?: string;
