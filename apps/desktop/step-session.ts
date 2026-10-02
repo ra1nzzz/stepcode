@@ -284,8 +284,8 @@ async function writeGuiModelRuntime(locked: LockedModule, cfg: GuiModelConfig): 
 /** 同目录临时文件 + rename：崩溃/断电不留半个文件。 */
 function atomicWrite(file: string, content: string): void {
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, content, 'utf-8');
   try {
+    fs.writeFileSync(tmp, content, 'utf-8');
     fs.renameSync(tmp, file);
   } catch (err) {
     try { fs.rmSync(tmp, { force: true }); } catch { /* 清理失败不覆盖真因 */ }
@@ -337,12 +337,23 @@ export async function runStepSessionTurn(
   host: StepSessionHost,
 ): Promise<StepTurnResult> {
   const sid = String(sessionId || '');
-  const session = await ensureSession(host, sid);
-  const toolSteps: NonNullable<StepTurnResult['tools']> = [];
   const ac = new AbortController();
   const prev = turnAborts.get(sid);
   if (prev) prev.abort();
+  // 必须在 ensureSession 之前就登记：建会话要跑 loader.reload() 与 createStepAgentSession，
+  // 这段时间里若别的回合把缓存填满，evictIdleSessions 看不到「这条在用」，
+  // 会把正在创建的会话 dispose 掉，而本回合随后把死对象插回缓存。
   turnAborts.set(sid, ac);
+  let session: StepSessionLike;
+  try {
+    session = await ensureSession(host, sid);
+  } catch (err) {
+    // 建会话失败时下面那个 finally 还没进入作用域：不清理就会永久留着「这条会话在跑」，
+    // 界面据此认为回合仍在进行，缓存里它也永远不可淘汰。
+    if (turnAborts.get(sid) === ac) turnAborts.delete(sid);
+    throw err;
+  }
+  const toolSteps: NonNullable<StepTurnResult['tools']> = [];
 
   const unsubscribe = session.subscribe((event) => {
     if (ac.signal.aborted) return;

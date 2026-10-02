@@ -210,6 +210,7 @@ const MCP = require(${JSON.stringify(path.join(__dirname, 'dist', 'mcp-client.js
       out = (err.stdout || '') + (err.stderr || '');
     } finally {
       try { fs.unlinkSync(probeFile); } catch { /* 临时探针 */ }
+      try { fs.unlinkSync(probeServer); } catch { /* 假服务端也删：每跑一次留一个就是垃圾 */ }
     }
     assert(!/UNCAUGHT:/.test(out), `stdin 的 EPIPE 逃成了 uncaughtException：${out.slice(0, 200)}`);
     assert(/RESULT_JSON:/.test(out), `探针没有产出结果：${out.slice(0, 200)}`);

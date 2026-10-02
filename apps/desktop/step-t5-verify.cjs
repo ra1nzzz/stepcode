@@ -260,7 +260,6 @@ let activeProvider = null;
 function hostFor(confirm, cwd, onDelta) {
   return {
     composed: () => wired,
-    preset: () => wired.preset,
     sessionCwd: () => cwd,
     notifyAgentDelta: (_sid, text) => { if (onDelta) onDelta(text); },
     notifyToolStep: () => {},
@@ -302,7 +301,6 @@ function hostFor(confirm, cwd, onDelta) {
     // 不碰模块内 current，只让这一调宿主交不出组合：必须报错而不是悄悄换一条路。
     const p = t5.runStepSessionTurn('s-fail', 'hi', {
       composed: () => undefined,
-      preset: () => 'bypass',
       sessionCwd: () => HOME,
       notifyAgentDelta: () => {},
       notifyToolStep: () => {},
@@ -434,6 +432,25 @@ function hostFor(confirm, cwd, onDelta) {
     } finally {
       rt.close();
     }
+  });
+
+  await check('建会话失败不留「回合仍在进行」的残迹（fail-closed 之后可恢复）', async () => {
+    // ensureSession 抛错时下面那个 finally 还没进入作用域。若 active 标记没被清掉，
+    // hasActiveStepTurn 会永远为真：界面卡在「进行中」，缓存里那条也永不淘汰。
+    const sid = 's-failclean';
+    await assert.rejects(
+      () => t5.runStepSessionTurn(sid, '在吗', {
+        composed: () => undefined,
+        sessionCwd: () => HOME,
+        notifyAgentDelta: () => {},
+        notifyToolStep: () => {},
+        uiContext: () => buildUiContext(async () => false),
+        root: () => root,
+      }),
+      /进程内组合未接上/,
+    );
+    assert.strictEqual(t5.hasActiveStepTurn(sid), false,
+      '失败的回合必须清掉 active 标记（hasActiveStepTurn 应回到 false）');
   });
 
   await check('切走再切回：A→B→A 不丢 A 的上下文（缓存不是单槽）', async () => {

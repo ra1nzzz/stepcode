@@ -346,12 +346,20 @@ let modelsFileUnreadable = false;
 
 function loadModelConfig(): ModelConfig {
   modelsFileUnreadable = false;
+  let raw: Record<string, unknown>;
   try {
     const file = MODELS_FILE();
     // 三路径默认一致（MAX_TOOL_ITERATIONS_DEFAULT = 200；用户显式配置最多到 500，见 saveModelConfig 钳制）。
-    // 坏文件回落到保守值而非「假装健康」，与项目 fail-closed 纪律一致。
     if (!fs.existsSync(file)) return { providers: [], defaultProvider: 'ollama', defaultModel: DEFAULT_MODEL, maxToolIterations: MAX_TOOL_ITERATIONS_DEFAULT };
-    const raw = JSON.parse(fs.readFileSync(file, 'utf-8')) as Record<string, unknown>;
+    raw = JSON.parse(fs.readFileSync(file, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    // 只有「读不出/解析不了」才置这个标志。写盘的异常必须在下面的作用域之外，
+    // 否则一次 rename 失败（Windows 目标被占用、磁盘满）会被当成读坏，
+    // 从此永久拒绝保存，而文件本身是好的。
+    modelsFileUnreadable = true;
+    return { providers: [], defaultProvider: 'ollama', defaultModel: DEFAULT_MODEL, maxToolIterations: MAX_TOOL_ITERATIONS_DEFAULT };
+  }
+  try {
     let migrated = false;
     const providers = (raw.providers as Array<Record<string, unknown>> | undefined)?.map(p => {
       const { apiKey: _k, ...rest } = p;
@@ -374,17 +382,23 @@ function loadModelConfig(): ModelConfig {
     const hasPlainKey = migrated;
     if (hasPlainKey) saveModelConfig(cfg);
     return cfg;
-  } catch { modelsFileUnreadable = true; return { providers: [], defaultProvider: 'ollama', defaultModel: DEFAULT_MODEL, maxToolIterations: MAX_TOOL_ITERATIONS_DEFAULT }; }
+  } catch (err) {
+    // 读与解析已经在上一个 try 里判过；走到这里只能是明文 key 迁移写盘失败。
+    // 那不能置 modelsFileUnreadable：文件是好的，永久拒绝保存会把用户锁死。
+    log('WARN', 'models', `明文 key 迁移写入失败（本次按内存值继续）：${(err as Error).message}`);
+    return cfg;
+  }
 }
 
 /** 原子替换：先写同目录临时文件再 rename，崩溃/断电不会留下半个 models.json。 */
 function saveModelConfig(cfg: ModelConfig): void {
   const file = MODELS_FILE();
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf-8');
   try {
+    fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf-8');
     fs.renameSync(tmp, file);
   } catch (err) {
+    // 写入自身失败也要清：半个文件留在 .tmp 里等于把带 apiKeyEnc 的残片长期摊在数据目录。
     try { fs.rmSync(tmp, { force: true }); } catch { /* 清理失败不覆盖真因 */ }
     throw err;
   }
@@ -816,14 +830,24 @@ ipcMain.handle('orchdesk:models-save', async (_e, config: unknown) => {
     // 提供商 id 必须非空且唯一。投影端 `toStepModelsJson` 按 id 写对象（后写胜出），
     // 读取端 `find` 取首个（先写胜出），而渲染层用显示名生成 id（纯中文名会折叠成 '--'）。
     // 同 id 的两个提供商因此会让回合把 key 发往另一个 baseUrl，或选中的模型不在写出的文件里。
+    // 提供商 id 必须非空。**重复只拦新引入的**：编辑态保留旧 id（渲染层
+    // renderer/actions/session.js 用 mpEditing.id），而 id 由显示名生成（纯中文名都折叠成
+    // '--'），所以对存量脏数据一律拒绝会把用户钉死——改任何一项设置都存不下，且改名无效。
     const ids = incoming.providers.map((p) => {
       const raw = (p as unknown as Record<string, unknown>).id;
       return typeof raw === 'string' ? raw.trim() : '';
     });
     if (ids.some((id) => !id)) return { ok: false, reason: '模型配置格式不合法（提供商 id 不能为空）' };
-    const dupes = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
-    if (dupes.length) {
-      return { ok: false, reason: `模型配置格式不合法（提供商 id 重复：${dupes.join('、')}）。显示名相同会撞出同一个 id，请改一个可区分的名字` };
+    const incomingDup = new Set(ids.filter((id, i) => ids.indexOf(id) !== i));
+    const existingIds = current.providers.map((p) => (typeof p.id === 'string' ? p.id.trim() : ''));
+    const preExisting = new Set(existingIds.filter((id, i) => existingIds.indexOf(id) !== i));
+    const fresh = [...incomingDup].filter((id) => !preExisting.has(id));
+    if (fresh.length) {
+      return { ok: false, reason: `模型配置格式不合法（新增的提供商 id 重复：${fresh.join('、')}）。显示名相同会撞出同一个 id，请改一个可区分的名字` };
+    }
+    if (incomingDup.size) {
+      // 放行但可见：存量重复仍会让投影端与读取端判给不同提供商，要让用户知道它存在。
+      log('WARN', 'models', `保存放行存量重复的提供商 id：${[...incomingDup].join('、')}（投影时后写胜出，请逐个改成可区分的名字）`);
     }
     // 无加密后端时 encryptKey 拒绝写明文并返回 ''。原实现照样回 {ok:true}，
     // 于是 key 被丢掉而 UI 显示「保存成功」。宁可保存失败并说明原因。
