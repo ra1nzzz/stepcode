@@ -304,12 +304,26 @@ export class GuanjiClient {
     const token = readToken();
     if (!token) return { ok: false, reason: '请先登录观雅集并配置 TOKEN' };
     // 路径白名单：仅允许发布数据目录 skills 内的 .skill 包（防任意文件外传）。
+    // 判定必须开在 realpath 之后：`path.resolve` 不解析符号链接，
+    // `skills/evil.skill` 只要是指向 `~/.ssh/id_rsa` 的软链，前缀检查照样通过，
+    // 而随后的 readFileSync 会跟着链接把任意文件读上市场。
+    // 校验过的真身就是被读的那个路径——不再回头用入参原路径去读。
     const skillsDir = path.resolve(getDataDir(), SKILLS_DIR_NAME);
-    const resolved = path.resolve(input.filePath);
-    if (!resolved.startsWith(skillsDir + path.sep) || !resolved.endsWith('.skill')) {
-      return { ok: false, reason: '发布文件必须位于 skills 目录内且为 .skill 包' };
+    let realSkillsDir: string;
+    try {
+      realSkillsDir = fs.realpathSync(skillsDir);
+    } catch {
+      return { ok: false, reason: 'skills 目录不存在，没有可发布的包' };
     }
-    if (!fs.existsSync(resolved)) return { ok: false, reason: '发布文件不存在' };
+    let realFile: string;
+    try {
+      realFile = fs.realpathSync(input.filePath);
+    } catch {
+      return { ok: false, reason: '发布文件不存在或不可解析' };
+    }
+    if (!realFile.startsWith(realSkillsDir + path.sep) || !realFile.endsWith('.skill')) {
+      return { ok: false, reason: '发布文件必须位于 skills 目录内且为 .skill 包（符号链接按其真身判定）' };
+    }
     try {
       // 1) 获取上传凭证
       const prep = await fetch(`${this.baseUrl}/api/upload/prepare`, {
@@ -325,7 +339,7 @@ export class GuanjiClient {
 
       // 2) 上传并预发布（multipart/form-data）
       const form = new FormData();
-      form.append('file', new Blob([fs.readFileSync(input.filePath)], { type: 'application/zip' }), `${input.slug}.skill`);
+      form.append('file', new Blob([fs.readFileSync(realFile)], { type: 'application/zip' }), `${input.slug}.skill`);
       form.append('publishMode', 'lingbi');
       const up = await fetch(`${this.baseUrl}/api/skills/upload`, {
         method: 'POST',

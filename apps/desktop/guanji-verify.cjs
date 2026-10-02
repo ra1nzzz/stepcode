@@ -72,6 +72,78 @@ const skill = (caps, auth) => ({ slug: 's1', name: 'S1', description: '', caps, 
     assert(!/下载失败/.test(String(r.reason || '')), `不该走到下载那一步：${r.reason}`);
   });
 
+  await check('发布路径白名单按 realpath 判定：软链指向 skills 外必须被拒（守卫反证）', async () => {
+    // setToken 走 safeStorage 加密，必须在 electron 桩下跑，所以这条用子进程探针
+    // （与 credentials-verify 的 B2 组同一手法）。断言仍在本文件里。
+    const fsx = require('node:fs');
+    const oss = require('node:os');
+    const { execFileSync } = require('node:child_process');
+    const root = fsx.mkdtempSync(path.join(oss.tmpdir(), 'orchdesk-guanji-'));
+    const probe = `
+      const Module = require('module');
+      const path = require('path'), fs = require('fs');
+      const ROOT = ${JSON.stringify(root)};
+      const { makeElectronStub } = require(${JSON.stringify(path.join(__dirname, '..', '..', 'scripts', 'verify-kit.cjs'))});
+      const stub = makeElectronStub({ home: ROOT, getPath: (n) => path.join(ROOT, 'stub', String(n)) });
+      const orig = Module._load;
+      Module._load = function (req) { if (req === 'electron') return stub; return orig.apply(this, arguments); };
+      const { GuanjiClient } = require(${JSON.stringify(path.join(__dirname, 'dist', 'guanji.js'))});
+      const dd = require(${JSON.stringify(path.join(__dirname, 'dist', 'data-dir.js'))});
+      (async () => {
+        const skills = path.join(ROOT, 'skills');
+        fs.mkdirSync(skills, { recursive: true });
+        const outside = path.join(ROOT, 'id_rsa.copy');
+        fs.writeFileSync(outside, 'SECRET-MUST-NOT-LEAVE');
+        const link = path.join(skills, 'evil.skill');
+        let canLink = true;
+        try { fs.symlinkSync(outside, link); } catch { canLink = false; }
+        dd.setDataDirResolver(() => ROOT);
+        const c = new GuanjiClient('http://127.0.0.1:9');
+        const tok = c.setToken('probe-token');
+        const out = { tokenOk: tok && tok.ok !== false, canLink };
+        if (out.tokenOk && canLink) {
+          const r = await c.publishSkill({ slug: 'evil', filePath: link });
+          out.linkReason = String((r && r.reason) || '');
+          out.linkOk = !!(r && r.ok);
+        }
+        // 反向保护：真身在 skills 内的普通 .skill 不得被路径门误杀。
+        const realPkg = path.join(skills, 'ok.skill');
+        fs.writeFileSync(realPkg, 'PK');
+        const ok = await c.publishSkill({ slug: 'ok', filePath: realPkg });
+        out.realReason = String((ok && ok.reason) || '');
+        dd.resetDataDirResolver();
+        console.log('PROBE_JSON:' + JSON.stringify(out));
+        process.exit(0);
+      })().catch((e) => { console.log('ERR:' + (e && e.stack || e)); process.exit(1); });
+    `;
+    const probeFile = path.join(oss.tmpdir(), `guanji-publish-probe-${Date.now()}.cjs`);
+    fsx.writeFileSync(probeFile, probe, 'utf-8');
+    let outText = '';
+    try {
+      outText = execFileSync(process.execPath, [probeFile], { encoding: 'utf-8', timeout: 60000 });
+    } catch (err) {
+      outText = String((err && err.stdout) || '') + String((err && err.stderr) || '');
+    } finally {
+      try { fsx.unlinkSync(probeFile); } catch { /* 临时探针 */ }
+      try { fsx.rmSync(root, { recursive: true, force: true }); } catch { /* 临时目录 */ }
+    }
+    const m = outText.match(/PROBE_JSON:(\{.*\})/);
+    assert(m, `探针未产出结果：\n${outText.slice(0, 400)}`);
+    const p = JSON.parse(m[1]);
+    assert(p.tokenOk, '探针没能配置 TOKEN（桩的 safeStorage 不可用？）');
+    if (p.canLink) {
+      assert(!p.linkOk, '软链发布必须被拒');
+      assert(/skills 目录内|不可解析/.test(p.linkReason),
+        `拒绝必须发生在路径判定而不是上传之后，实际原因：${p.linkReason}`);
+      assert(!/上传|凭证|fetch|ECONNREFUSED/i.test(p.linkReason),
+        `旧实现（path.resolve 不解析软链）会一路放行到网络层：${p.linkReason}`);
+    } else {
+      console.log('  NOTE  本机无法创建符号链接，软链那条断言未跑');
+    }
+    assert(!/必须位于 skills 目录内/.test(p.realReason),
+      `合法包被路径门误杀：${p.realReason}`);
+  });
+
   console.log('\n' + log.join('\n'));
   console.log(`\n结果：通过 ${passed} / 失败 ${failed}\n`);
   process.exit(failed ? 1 : 0);
