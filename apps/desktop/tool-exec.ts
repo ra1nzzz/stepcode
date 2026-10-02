@@ -155,7 +155,7 @@ function denyIfReadOnly(tool: ToolCall, sessionCtx?: { sessionId?: string }): To
   }
   if (currentSandboxMode(sessionCtx?.sessionId) !== 'read-only') return null;
   recordSandbox({ tool: tool.name, kind, target, decision: 'denied', reason: '沙箱为只读模式（read-only）', sessionId: sessionCtx?.sessionId });
-  return { name: tool.name, result: '', error: '沙箱为只读模式（read-only），变更类操作被拒绝。可在设置页「沙箱」切换为工作区可写。' };
+  return { name: tool.name, result: '', error: '沙箱为只读模式（read-only），变更类操作被拒绝。本壳没有模式切换入口：模式取自数据目录里的 sandbox.json，设置页能改的只有网络域名白名单。' };
 }
 
 /** 安全沙箱：读操作路径白名单（home/userData/temp/数据目录/会话绑定工作区）。
