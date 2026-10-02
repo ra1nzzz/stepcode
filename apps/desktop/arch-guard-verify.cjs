@@ -392,6 +392,24 @@ function scanRule(rule, code, fileName) {
     assert(!fs.existsSync(path.join(ROOT, 'packages', 'plugin', 'authz')), 'authz 插件应已删除，不能再留第二份正则');
   });
 
+  /* ---------------- R19：补偿层不作为第二套审批（SPEC 删除清单） ---------------- */
+
+  await check('R19 compensation/outboundGate 不得回到主进程执行路径', () => {
+    // SPEC 的删除清单写着 compensation「删除。不迁。不作为第二套审批」。
+    // dsh 卸下后 getService('compensation') 恒为 null，那道门只剩一行 fail-open
+    // WARN 加放行——既没审批，又让日志看起来像缺了一层保护。
+    // 正控：approvalGate 必须仍在两个文件里，否则本规则只是扫了个空集。
+    const mainSrc = stripComments(read(path.join(APP_DIR, 'main.ts')));
+    const toolSrc = stripComments(read(path.join(APP_DIR, 'tool-exec.ts')));
+    assert(mainSrc.includes('approvalGate'), 'main.ts 应仍有 approvalGate（正控）');
+    assert(toolSrc.includes('approvalGate'), 'tool-exec.ts 应仍有 approvalGate（正控）');
+    for (const [name, src] of [['main.ts', mainSrc], ['tool-exec.ts', toolSrc]]) {
+      assert(!/getService[^)]*['\"]compensation['\"]/.test(src), `${name} 不得再取 compensation 服务`);
+      assert(!src.includes('outboundGate'), `${name} 不得再出现 outboundGate（第二套审批）`);
+    }
+  });
+
+
   /* ---------------- R12：数据目录单源（M3）——禁止 env 直读复辟 ---------------- */
 
   await check('R12 数据目录单源：除 data-dir.ts 与 main.ts 赋值点外禁止直读 ORCHDESK_DATA_DIR', () => {

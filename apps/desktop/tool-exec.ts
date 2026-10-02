@@ -40,7 +40,6 @@ export type ToolExecHost = {
   dataDir: () => string;
   getAppPath: (name: 'home' | 'userData' | 'temp') => string | undefined;
   approvalGate: (toolName: string, reason: string, sessionId?: string, target?: string, signal?: AbortSignal) => Promise<string | null>;
-  outboundGate: (text: string, sessionId?: string, signal?: AbortSignal) => Promise<string | null>;
   recordSandbox: (input: {
     tool: string;
     kind: SandboxLogEntry['kind'];
@@ -72,9 +71,6 @@ function getAppPath(name: 'home' | 'userData' | 'temp'): string | undefined {
 }
 function approvalGate(toolName: string, reason: string, sessionId?: string, target?: string, signal?: AbortSignal): Promise<string | null> {
   return requireHost().approvalGate(toolName, reason, sessionId, target, signal);
-}
-function outboundGate(text: string, sessionId?: string, signal?: AbortSignal): Promise<string | null> {
-  return requireHost().outboundGate(text, sessionId, signal);
 }
 function recordSandbox(input: {
   tool: string;
@@ -463,13 +459,8 @@ export async function executeTool(tool: ToolCall, sessionCtx?: { sessionId?: str
           recordSandbox({ tool: name, kind: 'approval', target: cmd, decision: 'denied', reason: denied, sessionId: sid });
           return { name, result: '', error: denied };
         }
-        // PRD FR-12：删除 / 对外发送 / 不可逆命令在授权门之上再加一道补偿层二次确认
-        // （L4 双确认）。普通命令（git/npm/ls…）判定为 other，不额外打扰。
-        const outboundDenied = await outboundGate(cmd, sessionCtx?.sessionId, sessionCtx?.signal);
-        if (outboundDenied) {
-          recordSandbox({ tool: name, kind: 'outbound', target: cmd, decision: 'denied', reason: outboundDenied, sessionId: sid });
-          return { name, result: '', error: outboundDenied };
-        }
+        // 补偿层的「第二道确认」不接回：SPEC 删除清单写着 compensation 不作为第二套审批，
+        // dsh 卸下后该服务恒为 null。命令的真实关卡是上面的 approvalGate + 锁定包两档裁决。
         // 进程隔离 + 不阻塞主进程：在子进程中异步执行。
         // cwd 用会话工作目录（set_cwd 可切换），缺省回落 resolveShellCwd()。
         const { exec } = await import('node:child_process');

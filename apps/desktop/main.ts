@@ -31,7 +31,7 @@ import { nextApprovalId, pendingApprovals, registerAuthzIpc, type AuthzServiceLi
 import { registerMemoryIpc, loadPromotionLog, type MemoryServiceLike } from './ipc-memory';
 
 import { registerPromptIpc } from './ipc-prompt';
-import { registerPluginCapabilityIpc, type CompensationServiceLike } from './ipc-plugins';
+import { registerPluginCapabilityIpc } from './ipc-plugins';
 import { APPROVAL_TIMEOUT_MS, getHostServices } from './host-services';
 import { connectStepExtension, createGuiStepConfirm, currentStepExtension, listGuiPermissionModes, resolveStepCheckout, selectGuiPreset } from './step-extension';
 import { prepareOfficialRuntime } from './step-follow';
@@ -488,33 +488,14 @@ async function approvalGate(toolName: string, reason: string, sessionId?: string
 }
 
 /**
- * 边界外补偿门（PRD FR-12，第九死挂点修复）。
- * 三类高危（删除文件 / 对外发送 / 不可逆操作）经补偿层 withhold 判定 → 需确认时走
- * 审批弹窗二次确认；无补偿服务/无审批通道时按 fail-open 放行但记 WARN——
- * 与 firePreStep 同策略：基础设施缺失不锁死对话，但绝不静默。
+ * 边界外的补偿门已删除。SPEC 的删除清单写着 compensation「删除。不迁。不作为第二套审批」
+ * （[ADR 0005](../../docs/70-决策/0005-进程内嵌入与插件删除.md)），而 dsh 卸下后
+ * `getService('compensation')` 恒为 null：这道门每次被调用都只落一行
+ * 「补偿层服务未接入，外发预判放行（fail-open）」再返回放行——既不是第二套审批，
+ * 又给沙箱日志和运维日志制造「缺一层保护」的误读。真正的两档裁决与危险命令确认
+ * 只在 `approvalGate` 和锁定包的 `tool_call` 上，渲染层的发前高风险提示是提示不是审批。
+ * `arch-guard` R13 钉住这条不再回来。
  */
-async function outboundGate(text: string, sessionId?: string, signal?: AbortSignal): Promise<string | null> {
-  const svc = getService<CompensationServiceLike>('compensation');
-  if (!svc) {
-    // BUG（全盘死挂点扫描）：原实现无服务时直接放行且不落任何日志，与函数注释
-    // 「fail-open 放行但记 WARN、绝不静默」不符；与 approvalGate 的 fail-closed(795)
-    // 形成无理由双标。补偿层缺失=外发无预判门，必须可见。
-    log('WARN', 'compensation', '补偿层服务未接入，外发预判放行（fail-open，无确认门）');
-    return null;
-  }
-  let verdict: { needsConfirm?: boolean; category?: string; reason?: string } | null = null;
-  try {
-    const raw = await svc.withhold(String(text || ''));
-    verdict = raw as { needsConfirm?: boolean; category?: string; reason?: string } | null;
-  } catch (err) {
-    log('WARN', 'compensation', `外发预判失败（放行）: ${(err as Error).message}`);
-    return null;
-  }
-  if (!verdict?.needsConfirm) return null;
-  const category = String(verdict.category || 'other');
-  const denied = await approvalGate(`outbound:${category}`, String(verdict.reason || '跨边界/不可逆外发操作'), sessionId, undefined, signal);
-  return denied;
-}
 
 // --- Agent Runtime：模型回合 + 工具调用循环 ---
 
@@ -560,7 +541,6 @@ initToolExec({
   dataDir,
   getAppPath: (name) => safeGetPath(name),
   approvalGate,
-  outboundGate,
   recordSandbox,
 });
 initConnectors({ dataDir });
