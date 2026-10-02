@@ -6,6 +6,7 @@
  * 3. 空串 / 非法密文 → 空串（不回落明文、不抛错）
  * 4. 主进程 encryptKey/decryptKey 走新格式（stub electron 后驱动真实 handler）
  * 5. shell_command 在子进程异步执行，不阻塞主进程且超时可杀
+ *    （BUG-052：本构建里宿主服务句柄恒 null，命令实际到不了执行，组 D 断言的是被拒与留痕）
  *
  * 运行：node credentials-verify.cjs   （需先 npx tsc -p tsconfig.json）
  */
@@ -376,7 +377,7 @@ const cred = require('./dist/credentials.js');
     assert.ok(String(hit.reason).includes('沙箱服务已停止'), '日志应说明沙箱服务已停止');
   });
 
-  await check('埋点：审批放行后的 shell 成功执行记为 allowed', async () => {
+  await check('埋点：审批放行后的 shell 变更被记为 denied（BUG-052 现状）', async () => {
     const out = await runToolProbe('shell_command', { command: 'echo hello-sandbox' }, { approve: true, logQuery: { keyword: 'echo' } });
     const hit = out.log.entries.find((e) => e.decision === 'denied' && String(e.reason).includes('沙箱服务已停止'));
     assert.ok(hit, '停止后的变更应记为拒绝，实际: ' + JSON.stringify(out.log.entries).slice(0, 300));
@@ -462,15 +463,16 @@ const cred = require('./dist/credentials.js');
     assert.strictEqual(out.logAfterClear.total, 0, '清空后 total 应为 0');
   });
 
-  console.log('== D. 沙箱：命令在子进程异步执行 ==');
+  // 组名沿用历史；本构建下命令到不了子进程那一步（BUG-052），组内断言已按实际结果命名。
+  console.log('== D. 沙箱：变更类工具的拒绝与留痕 ==');
 
-  await check('shell_command 经审批放行后正确执行（授权门→弹窗→应答→子进程全链路）', async () => {
+  await check('shell_command 在句柄缺失下被拒（BUG-052 现状；全链路正控尚未被真正测到）', async () => {
     const out = await runToolProbe('shell_command', { command: 'echo hello-sandbox' }, { approve: true });
     assert.ok(out && typeof out.result === 'string', '应返回 result');
     assert.ok(out.error && out.error.includes('沙箱服务已停止'), '沙箱停止后不得执行命令，实际: ' + JSON.stringify(out).slice(0, 200));
   });
 
-  await check('渲染层未就绪时 shell 被授权门零等待拒绝（fail-closed）', async () => {
+  await check('渲染层未就绪时 shell 也被拒（当前拒于句柄缺失，先于授权门）', async () => {
     const out = await runToolProbe('shell_command', { command: 'echo blocked' });
     assert.ok(out.error && out.error.includes('沙箱服务已停止'), '沙箱停止后应拒绝，实际: ' + JSON.stringify(out).slice(0, 200));
   });
