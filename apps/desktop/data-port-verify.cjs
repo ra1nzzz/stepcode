@@ -261,8 +261,11 @@ const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf-8'));
 
   console.log('\n数据导出/导入闭环验证');
   const ok = summary();
-  process.exit(ok ? 0 : 1);
+  // 别在这里 process.exit()：断言全过之后立刻硬退出，会在 Windows 上撞上 libuv 的
+  // `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING) (src\win\async.c:94)` 而 abort（退出码 127），
+  // 于是「12 通过 / 0 失败」的绿套件把整条 verify 链判红。改成设 exitCode、让事件循环自己排空。
+  process.exitCode = ok ? 0 : 1;
 })().catch((err) => {
   console.error('验证脚本异常:', err);
-  process.exit(1);
+  process.exitCode = 1;
 });
