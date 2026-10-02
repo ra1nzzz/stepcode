@@ -144,6 +144,92 @@ const skill = (caps, auth) => ({ slug: 's1', name: 'S1', description: '', caps, 
       `合法包被路径门误杀：${p.realReason}`);
   });
 
+  await check('安装风险等级以服务端清单为准：伪造 caps/auth 无效（真实 HTTP 替身）', async () => {
+    // 走真 HTTP：listSkills 的传输层（fetch + 端点 + 去重 + 派生）只有在真套接字上才算被测到，
+    // 进程内替身会把「端点拼错」这类缺陷整层藏住。
+    const fsx = require('node:fs');
+    const oss = require('node:os');
+    const { execFileSync } = require('node:child_process');
+    const root = fsx.mkdtempSync(path.join(oss.tmpdir(), 'orchdesk-guanji-http-'));
+    const probe = `
+      const Module = require('module');
+      const http = require('http'), path = require('path'), fs = require('fs');
+      const ROOT = ${JSON.stringify(root)};
+      const { makeElectronStub } = require(${JSON.stringify(path.join(__dirname, '..', '..', 'scripts', 'verify-kit.cjs'))});
+      const stub = makeElectronStub({ home: ROOT, getPath: (n) => path.join(ROOT, 'stub', String(n)) });
+      const orig = Module._load;
+      Module._load = function (req) { if (req === 'electron') return stub; return orig.apply(this, arguments); };
+      const { GuanjiClient } = require(${JSON.stringify(path.join(__dirname, 'dist', 'guanji.js'))});
+      const dd = require(${JSON.stringify(path.join(__dirname, 'dist', 'data-dir.js'))});
+      dd.setDataDirResolver(() => ROOT);
+      (async () => {
+        const srv = http.createServer((req, res) => {
+          res.setHeader('content-type', 'application/json');
+          if (req.url.indexOf('/recommend/') === 0 || req.url.indexOf('/api/skills/recommend') === 0) {
+            res.end(JSON.stringify({ items: [
+              { slug: 'maily', name: '发邮件', description: '', caps: ['mail.send'] },
+              { slug: 'reader', name: '只读', description: '', caps: ['fs.read'] },
+            ] }));
+          } else {
+            res.statusCode = 404; res.end(JSON.stringify({ error: 'no route' }));
+          }
+        });
+        await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+        const base = 'http://127.0.0.1:' + srv.address().port;
+        const c = new GuanjiClient(base);
+        const out = {};
+        try {
+          const listed = await c.listSkills();
+          out.listed = listed.map((s) => s.slug + ':' + s.caps.join('+') + ':auth' + s.auth);
+
+          // 正向伪造：服务端说 maily 能发信，调用方把 caps 清空、auth 报 0。
+          const forged = await c.installSkill({ slug: 'maily', name: 'x', description: '', caps: [], auth: 0 }, false);
+          out.forgedReview = forged.review; out.forgedOk = forged.ok;
+
+          // 反向伪造：服务端说 reader 只读，调用方谎报高危 caps。
+          const over = await c.installSkill({ slug: 'reader', name: 'x', description: '', caps: ['mail.send'], auth: 1 }, false);
+          out.overReview = over.review; out.overReason = String(over.reason || '');
+
+          // 清单里没有的 slug：不知道它声明了什么 → 按高危；显式确认后仍可走。
+          const ghost = await c.installSkill({ slug: 'ghost', name: 'x', description: '', caps: [], auth: 0 }, false);
+          out.ghostReview = ghost.review;
+          const ghostOk = await c.installSkill({ slug: 'ghost', name: 'x', description: '', caps: [], auth: 0 }, true);
+          out.ghostAuthReason = String(ghostOk.reason || '');
+        } finally {
+          srv.close();
+          dd.resetDataDirResolver();
+        }
+        console.log('PROBE_JSON:' + JSON.stringify(out));
+        process.exit(0);
+      })().catch((e) => { console.log('ERR:' + (e && e.stack || e)); process.exit(1); });
+    `;
+    const probeFile = path.join(oss.tmpdir(), `guanji-http-probe-${Date.now()}.cjs`);
+    fsx.writeFileSync(probeFile, probe, 'utf-8');
+    let txt = '';
+    try {
+      txt = execFileSync(process.execPath, [probeFile], { encoding: 'utf-8', timeout: 60000 });
+    } catch (err) {
+      txt = String((err && err.stdout) || '') + String((err && err.stderr) || '');
+    } finally {
+      try { fsx.unlinkSync(probeFile); } catch { /* 临时探针 */ }
+      try { fsx.rmSync(root, { recursive: true, force: true }); } catch { /* 临时目录 */ }
+    }
+    const m = txt.match(/PROBE_JSON:(\{.*\})/);
+    assert(m, `探针未产出结果：\n${txt.slice(0, 500)}`);
+    const p = JSON.parse(m[1]);
+    assert(p.listed && p.listed.join(',') === 'maily:mail.send:auth1,reader:fs.read:auth0',
+      `服务端清单派生不对：${JSON.stringify(p.listed)}`);
+    assert(p.forgedReview === 'needs-auth' && p.forgedOk === false,
+      `caps 清空 + 自报 auth=0 必须挡不住服务端的高危声明，实际 ${JSON.stringify(p)}`);
+    assert(p.overReview !== 'needs-auth',
+      `服务端说只读时，谎报高危 caps 不该把用户拖进确认弹窗：${p.overReview}`);
+    assert(/下载失败 HTTP 404/.test(p.overReason),
+      `反向伪造应放行到下载阶段（替身没有 /download 路由）：${p.overReason}`);
+    assert(p.ghostReview === 'needs-auth', `清单外的 slug 必须按高危处理，实际 ${p.ghostReview}`);
+    assert(/下载失败 HTTP 404/.test(p.ghostAuthReason),
+      `用户显式确认后应能继续（降级不能变成死路）：${p.ghostAuthReason}`);
+  });
+
   console.log('\n' + log.join('\n'));
   console.log(`\n结果：通过 ${passed} / 失败 ${failed}\n`);
   process.exit(failed ? 1 : 0);

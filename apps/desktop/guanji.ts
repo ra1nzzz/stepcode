@@ -192,8 +192,17 @@ export class GuanjiClient {
         // 单端点失败不影响其余；最终若全失败则由调用方回落静态样本。
       }
     }
+    // 缓存服务端派生的清单：安装时以它判风险（见 installSkill 的说明）。
+    for (const s of seen.values()) this.serverSkills.set(s.slug, s);
     return [...seen.values()];
   }
+
+  /**
+   * 服务端派生的技能清单，`listSkills()` 的副产品。
+   * 存在的原因：`orchdesk:guanji-install` 的 `caps` / `auth` 是渲染层带来的入参，
+   * 能伪造 `auth=0` 的调用方同样能发 `caps: []`，所以风险等级不能由调用方说。
+   */
+  private serverSkills = new Map<string, GuanjiSkill>();
 
   /**
    * 安装前能力审查（PLAN 红线：不得跳过）。
@@ -215,7 +224,15 @@ export class GuanjiClient {
 
   /** 下载 .skill 包到本地 skills 目录（数据目录/skills/<slug>.skill）。 */
   async installSkill(skill: GuanjiSkill, authorized = false): Promise<InstallResult> {
-    const review = this.capabilityReview(skill, authorized);
+    // 风险等级只认服务端清单。清单里没有这个 slug（缓存未建立、或它不在推荐位），
+    // 就按「不知道它声明了什么」处理：当成高危，必须走确认弹窗；
+    // 用户显式确认后仍可安装，否则这条降级会变成死路。
+    const server = this.serverSkills.get(String(skill?.slug || ''));
+    const trusted: GuanjiSkill = {
+      ...(server ?? skill),
+      caps: server ? server.caps : ['__caps_unknown__'],
+    };
+    const review = this.capabilityReview(trusted, authorized);
     if (review === 'needs-auth') {
       return { ok: false, review, reason: '该技能含 L3/L4 高危能力，需在确认弹窗中显式授权后安装' };
     }
