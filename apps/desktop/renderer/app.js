@@ -2122,7 +2122,7 @@
       return `<div class="main-inner"><h1 class="pg">偏好</h1><div class="pg-sub">当前：${here}。模型、沙箱、授权、桌面集成都在这一页。</div>
         <div class="statbar">
           <div class="stat"><div class="sk">授权模式</div><div class="sv"><span class="dot" style="background:${authModeDotColor()}"></span>${authModeLabel(state.authMode)}${state.authzLoaded ? '' : ' · 未接入'}</div></div>
-          <div class="stat"><div class="sk">沙箱</div><div class="sv">${state.sandbox.mode ? `<span class="badge ok" style="font-weight:600">Windows ACL · ${esc(state.sandbox.modeLabel || '未识别档位')}</span>` : '<span class="badge">未接入</span>'}</div></div>
+          <div class="stat"><div class="sk">沙箱</div><div class="sv">${state.sandbox.mode ? `<span class="badge ok" style="font-weight:600">应用层策略 · ${esc(state.sandbox.modeLabel || '未识别档位')}</span>` : '<span class="badge">未接入</span>'}</div></div>
           <div class="stat"><div class="sk">数据目录</div><div class="sv" style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px" title="${esc(ddOk ? state.dataDirInventory.dir : '')}">${ddOk ? '…/' + esc(ddShort) : '本地（未扫描）'}</div></div>
           <div class="stat"><div class="sk">运行时</div><div class="sv" style="font-size:12px;font-weight:500">${rtOk ? `插件运行时就绪 · ${state.pluginRuntime.activeCount}/${state.pluginRuntime.total}` : '插件运行时未启动'}</div></div>
         </div>
@@ -2209,7 +2209,7 @@
         <div class="sec-title" id="settings-section-sandbox"><span class="ico">${ic('shield', 14)}</span>沙箱与授权</div>
         <div class="card">
           <div class="row" style="margin-bottom:10px">
-            <span class="badge ok">沙箱 Windows ACL</span><span class="badge info">L0-L4 分级</span><span class="faint">fail-closed</span>
+            <span class="badge ok">沙箱（应用层路径与命令策略）</span>${state.authLevels.length ? '<span class="badge info">L0-L4 分级</span>' : '<span class="badge">L0-L4 分级未接入</span>'}<span class="faint">fail-closed</span>
           </div>
           <div class="faint" style="margin-bottom:8px">授权模式只有默认模式和完全信任。危险命令仍由本界面确认。</div>
           <div class="auth-modes">
@@ -2226,7 +2226,7 @@
           <div class="row" style="margin-top:8px"><button class="btn sm primary" data-action="sandbox-save-net">保存白名单</button><span class="faint" id="net-allow-tip"></span></div>
           <div class="sec-title" style="margin:24px 0 8px">L0-L4 分级</div>
           <div class="levels">
-            ${state.authLevels.length ? state.authLevels.map((l) => `<div class="lv"><span class="lv-n">L${l.level}</span><span class="lv-l">${l.label}</span><span class="faint">${l.scope}</span>${l.requiresApproval ? '<span class="badge warn">需授权</span>' : ''}</div>`).join('')
+            ${state.authLevels.length ? state.authLevels.map((l) => `<div class="lv"><span class="lv-n">L${l.level}</span><span class="lv-l">${esc(l.label)}</span><span class="faint">${esc(l.scope)}</span>${l.requiresApproval ? '<span class="badge warn">需授权</span>' : ''}</div>`).join('')
               // P4-S3-06：设置页这处原来也只有「加载中…」一个分支，init 里 getAuthLevels
               // 失败/返回空时它会永久卡死。与授权模式弹窗里的那处同一套三态。
               : (state.authzLoaded
@@ -2262,7 +2262,7 @@
           </div>
           <div class="sec-title" style="margin:24px 0 8px">审计日志（近期）</div>
           <div class="audit-log">
-            ${state.authAudit.length ? state.authAudit.slice().reverse().slice(0, 12).map((e) => `<div class="al"><span class="mono" style="font-size:11px">${new Date(e.ts).toLocaleTimeString('zh-CN')}</span><span class="badge ${e.kind === 'approval-decided' ? (e.outcome === 'allowed-once' ? 'ok' : 'danger') : 'info'}">${e.kind}</span>${e.toolName ? `<span class="mono faint">${e.toolName}</span>` : ''}${e.outcome ? `<span class="faint">${e.outcome}</span>` : ''}${e.mode ? `<span class="faint">mode=${e.mode}</span>` : ''}</div>`).join('') : '<div class="faint">暂无审计事件（L3/L4 操作与模式切换会记录于此）</div>'}
+            ${state.authAudit.length ? state.authAudit.slice().reverse().slice(0, 12).map((e) => `<div class="al"><span class="mono" style="font-size:11px">${new Date(e.ts).toLocaleTimeString('zh-CN')}</span><span class="badge ${e.kind === 'approval-decided' ? (e.outcome === 'allowed-once' ? 'ok' : 'danger') : 'info'}">${esc(e.kind)}</span>${e.toolName ? `<span class="mono faint">${esc(e.toolName)}</span>` : ''}${e.outcome ? `<span class="faint">${esc(e.outcome)}</span>` : ''}${e.mode ? `<span class="faint">mode=${esc(e.mode)}</span>` : ''}</div>`).join('') : '<div class="faint">暂无审计事件（L3/L4 操作与模式切换会记录于此）</div>'}
           </div>
           <div class="sec-title" style="margin:24px 0 8px">补偿层审计（边界外操作）</div>
           <div class="audit-log">
@@ -2272,7 +2272,7 @@
           </div>
           <div class="row" style="margin-top:8px"><button class="btn sm" data-action="comp-record">+ 记录补偿动作</button><span class="faint">不保证完全撤销，仅尽力补偿</span></div>
           <div class="sec-title" style="margin:24px 0 8px">沙箱日志（可检索）</div>
-          <div class="faint" style="margin-bottom:6px">记录每一次沙箱判定：路径 / 命令 / 域名白名单、授权门、外发预判，以及执行成败。环形缓冲保留最近 ${state.sandboxLog.max} 条，随数据目录迁移。</div>
+          <div class="faint" style="margin-bottom:6px">记录沙箱判定：路径 / 命令 / 域名白名单、授权门、外发预判；Agent 在锁定点内执行的写入与命令类工具也记执行结果（只读工具无门可过，不入审计）。环形缓冲保留最近 ${state.sandboxLog.max} 条，随数据目录迁移。</div>
           <div class="sblog-bar">
             <input type="text" id="sblog-kw" class="inp mono" placeholder="检索：路径 / 命令 / 域名 / 会话 ID" style="flex:1;font-size:11.5px" value="${esc(state.sandboxLog.keyword)}">
             <select id="sblog-decision" class="inp" style="width:96px">
@@ -2298,7 +2298,7 @@
               <span class="mono faint">${esc(e.tool)}</span>
               <span class="mono" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(e.target)}">${esc(e.target)}</span>
               ${e.reason ? `<span class="faint" style="max-width:32%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(e.reason)}">${esc(e.reason)}</span>` : ''}
-            </div>`).join('') : `<div class="faint">${state.sandboxLog.loaded ? '暂无匹配记录（Agent 执行文件 / 命令 / 网络操作时写入）' : '沙箱日志未接入（主进程桥不可用）'}</div>`}
+            </div>`).join('') : `<div class="faint">${state.sandboxLog.loaded ? '暂无匹配记录（写入 / 命令 / 外发类判定才入审计）' : '沙箱日志未接入（主进程桥不可用）'}</div>`}
           </div>
         </div>
         <div class="sec-title" id="settings-section-prompt"><span class="ico">${ic('at', 14)}</span>系统提示词库</div>

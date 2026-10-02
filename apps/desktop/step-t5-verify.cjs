@@ -157,6 +157,7 @@ global.fetch = async (...args) => { fetchCalls += 1; return realFetch(...args); 
 const seam = require('./dist/step-extension.js');
 const dsh = require('./dist/dsh-runtime.js');
 const t5 = require('./dist/step-session.js');
+const sb = require('./dist/sandbox-log.js');
 
 let wired = null;
 const root = seam.resolveStepCheckout();
@@ -181,20 +182,38 @@ const SSE_BODY = (() => {
   ].join('');
 })();
 
+/** 一条合法的 OpenAI 工具调用流：锁定包据此在自己进程内执行该工具。 */
+function sseToolCall(callId, name, argsJson) {
+  const sse = (obj) => `data: ${JSON.stringify(obj)}\n\n`;
+  return [
+    sse({
+      id: 'c1', object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: callId, type: 'function', function: { name, arguments: argsJson } }] } }],
+    }),
+    sse({
+      id: 'c1', object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }),
+    'data: [DONE]\n\n',
+  ].join('');
+}
+
 /**
  * 起一个本地假 OpenAI 端点，并把「GUI 模型页的配置」交给会话。
+ * `planFor(cwd)` 可选：按请求次序返回要发的 SSE（用于驱动工具调用回合），
+ * 不给就每一步都回同一份纯文本流。
  *
- * 关键区别：本函数不再直接写 Step 格式的 auth.json / models.json——那样等于把
+ * 关键区别：本函数不直接写 Step 格式的 auth.json / models.json——那样等于把
  * 投影逻辑抽掉，套件会绿而生产桥接坏了也看不出来。这里只给 GUI 侧形状的配置
  * （带明文 key），落盘由 step-session → step-model-bridge 自己完成，套件再去验
- * 落到了哪、写成什么形状。
- *
- * 存储根与 agent 根都指向临时目录，不碰用户真的 ~/.stepcode。
+ * 落到了哪、写成什么形状。存储根与 agent 根都指向临时目录，不碰用户真的 ~/.stepcode。
  */
-async function startFakeProvider() {
+async function startFakeProvider(planFor) {
   const storageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-storage-'));
   const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-stepagent-'));
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'stepcode-t5-turncwd-'));
+  const plans = typeof planFor === 'function' ? planFor(cwd) : null;
   const hits = [];
   const server = http.createServer((req, res) => {
     let body = '';
@@ -202,7 +221,8 @@ async function startFakeProvider() {
     req.on('end', () => {
       hits.push({ url: req.url, body, auth: req.headers.authorization || '' });
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      res.end(SSE_BODY);
+      const next = plans ? plans[hits.length - 1] : undefined;
+      res.end(next === undefined ? SSE_BODY : next);
     });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -257,12 +277,13 @@ async function startFakeProvider() {
 /** 当前用例的假端点；未起时给一份空配置（会话不碰模型）。 */
 let activeProvider = null;
 
-function hostFor(confirm, cwd, onDelta) {
+function hostFor(confirm, cwd, onDelta, onToolRun) {
   return {
     composed: () => wired,
     sessionCwd: () => cwd,
     notifyAgentDelta: (_sid, text) => { if (onDelta) onDelta(text); },
     notifyToolStep: () => {},
+    recordToolRun: (e) => { if (onToolRun) onToolRun(e); },
     uiContext: () => buildUiContext(confirm),
     modelConfig: () => (activeProvider ? activeProvider.modelConfig : { providers: [] }),
     root: () => root,
@@ -304,6 +325,7 @@ function hostFor(confirm, cwd, onDelta) {
       sessionCwd: () => HOME,
       notifyAgentDelta: () => {},
       notifyToolStep: () => {},
+      recordToolRun: () => {},
       uiContext: () => buildUiContext(async () => false),
       root: () => root,
     });
@@ -335,6 +357,65 @@ function hostFor(confirm, cwd, onDelta) {
     } finally {
       rt.close();
     }
+  });
+
+  // BUG-053 后半：Agent 真正执行工具的那条路（锁定点内）此前对沙箱日志一条都不留。
+  // 实测本构建注册的工具只有 read / bash / edit / write 四个（从模型请求体的 tools 字段读出），
+  // 所以正控用 write（变更类，该入审计）+ read（只读类，不该入）。
+  // 判据成对——摘掉接线 → 审计为空判红；把只读工具也记进去 → 条数变 2 判红。
+  await check('Agent 执行变更类工具真的落盘并入沙箱审计，只读工具不入', async () => {
+    const targetFile = 'audit-probe.txt';
+    const toolRuns = [];
+    const rt = await startFakeProvider((cwd) => [
+      sseToolCall('call_w', 'write', JSON.stringify({ path: path.join(cwd, targetFile), content: 'hello audit' })),
+      sseToolCall('call_r', 'read', JSON.stringify({ path: path.join(cwd, targetFile) })),
+      SSE_BODY,
+    ]);
+    try {
+      await t5.runStepSessionTurn('s-audit', '写一个文件再读回来', hostFor(
+        async () => false, rt.cwd, null, (e) => toolRuns.push(e),
+      ));
+
+      assert.equal(fs.existsSync(path.join(rt.cwd, targetFile)), true,
+        'write 应由锁定包真的执行并落盘（否则下面这条审计是对空事件留痕）');
+      assert.equal(toolRuns.length, 1,
+        `审计应只有一条 write，实际：${toolRuns.map((e) => `${e.tool}/${e.decision}`).join(',') || '(空)'}`);
+      const e = toolRuns[0];
+      assert.equal(e.tool, 'write');
+      assert.equal(e.kind, 'path');
+      assert.equal(String(e.target).replace(/\\/g, '/').endsWith(targetFile), true,
+        `target 应是被写入的路径，实际 ${e.target}`);
+      assert.equal(e.sessionId, 's-audit');
+      assert.equal(e.decision, 'allowed', `工具执行成功却记成 ${e.decision}：${e.reason || ''}`);
+      assert.ok(rt.hits.length >= 2, '工具结果应回填给模型再走下一轮');
+    } finally {
+      rt.close();
+    }
+  });
+
+  await check('agentExecAudit 的映射与不入审计的边界（纯函数双向）', async () => {
+    const ok = sb.agentExecAudit('write_file', { path: 'D:/a/b.ts', content: 'x' }, false);
+    assert.deepEqual({ tool: ok.tool, kind: ok.kind, target: ok.target, decision: ok.decision },
+      { tool: 'write_file', kind: 'path', target: 'D:/a/b.ts', decision: 'allowed' });
+    assert.equal(ok.reason, undefined, '放行不留假原因');
+
+    const bad = sb.agentExecAudit('run_command', { command: 'del x' }, true, 'boom');
+    assert.equal(bad.kind, 'command');
+    assert.equal(bad.target, 'del x');
+    assert.equal(bad.decision, 'error');
+    assert.equal(bad.reason, 'boom');
+
+    // 不入审计的三种形态：只读工具、认不出的名字、取不到对象（宁可少一条也不写脏条目）。
+    assert.equal(sb.agentExecAudit('read', { path: 'D:/a/b.ts' }, false), null,
+      '本构建注册的只读工具 read 不得入审计');
+    assert.equal(sb.agentExecAudit('read_file', { path: 'D:/a/b.ts' }, false), null);
+    assert.equal(sb.agentExecAudit('clarify_user', { question: 'q' }, false), null);
+    assert.equal(sb.agentExecAudit('write_file', { content: 'x' }, false), null);
+    assert.equal(sb.agentExecAudit('write_file', null, false), null);
+
+    // 另外两个注册名各自的归类（edit 走 path、bash 走 command）。
+    assert.equal(sb.agentExecAudit('edit', { path: 'D:/a/b.ts', edits: [] }, false).kind, 'path');
+    assert.equal(sb.agentExecAudit('bash', { command: 'ls' }, false).kind, 'command');
   });
 
   await check('GUI 模型配置经桥接落到 Step 存储根，且不动 CLI 自己的凭据', async () => {
@@ -444,6 +525,7 @@ function hostFor(confirm, cwd, onDelta) {
         sessionCwd: () => HOME,
         notifyAgentDelta: () => {},
         notifyToolStep: () => {},
+        recordToolRun: () => {},
         uiContext: () => buildUiContext(async () => false),
         root: () => root,
       }),

@@ -580,6 +580,10 @@ const stepSessionHost: StepSessionHost = {
   sessionCwd: (sessionId?: string) => sessionCwd(sessionId),
   notifyAgentDelta,
   notifyToolStep,
+  // BUG-053：Agent 在锁定点内执行的变更 / 命令类工具，结果写进沙箱日志（PRD FR-8）。
+  // 与 GUI 确认的审批留痕（guiStepConfirm 的 record）是两条互补记录：那条说「批没批」，
+  // 这条说「真跑成了什么」。
+  recordToolRun: (entry) => recordSandbox(entry),
   uiContext: () => buildStepUiContext(),
   // GUI 模型页配的提供商 → Step 会话该用的模型。key 在这里用 safeStorage 解好，
   // 明文只交给 step-model-bridge 投影，不进日志。

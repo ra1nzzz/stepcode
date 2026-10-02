@@ -179,6 +179,26 @@ async function main() {
         assert.equal(file.includes(banned), false, banned);
       }
     }
+    // BUG-056：界面曾把沙箱写成「Windows ACL」。全仓（本壳 + 锁定包）没有任何 OS 级
+    // 隔离实现——搜 icacls / SetNamedSecurityInfo / job object 为零，锁定包里的
+    // workflow ACL 是进程内的路径与工具判定。能力声明必须与实现对齐，所以这句进黑名单：
+    // 将来真引入 OS 级沙箱时，删这条检查要和实现、验证一起进，不能只删文案。
+    // 注意：这条扫的是渲染层源码，本套件自身不在扫描范围内（否则写下这句就自判红）。
+    const UNIMPLEMENTED_CLAIMS = ['Windows ACL'];
+    for (const file of [app, stub, settings]) {
+      for (const claim of UNIMPLEMENTED_CLAIMS) {
+        assert.equal(file.includes(claim), false, `界面声明了未实现的能力：${claim}`);
+      }
+    }
+    // BUG-057：设置页曾把外部可控的字符串裸插进 innerHTML（分级定义与审计事件），
+    // 而同源数据在插件页是 esc() 过的——不一致本身就是证据。今天 authz 恒 null 所以
+    // 打不通，但 BUG-052 一旦接线这些字符串就变成 XSS 面。这里用棘轮钉住这六处形态
+    // 不得再出现（转义后的 ${esc(...)} 不含这些子串），将来新增同类插值仍要人来看，
+    // 但已修的四绝不允许退回去。
+    const UNESCAPED_INTERPOLATION = ['${l.label}', '${l.scope}', '${e.kind}', '${e.toolName}', '${e.outcome}', '${e.mode}'];
+    for (const form of UNESCAPED_INTERPOLATION) {
+      assert.equal(app.includes(form), false, `未转义的外部字符串插进 innerHTML：${form}`);
+    }
   });
 
   // BUG-045：BANNED_UI 只扫渲染层源码，看不见「主进程回传的机器标识被直接插进正文」这一形态。

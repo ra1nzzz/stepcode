@@ -120,6 +120,56 @@ export function appendSandboxLog(
   return next.length > SANDBOX_LOG_MAX ? next.slice(next.length - SANDBOX_LOG_MAX) : next;
 }
 
+/**
+ * Agent（锁定点 Step 运行时）自己执行的那批变更 / 命令类工具 → 一条可检索的审计输入。
+ *
+ * 工具名与入参键名以锁定包里的 WRITE_OR_EXECUTE_TOOLS 与各 schema 为准（逐一核对过），
+ * 只读工具不入审计：它们没有门可过，记进日志只会用「放行」淹没真判定。
+ * 认不出的名字、或取不到对象（path / command）的调用一律返回 null ——
+ * 与其写一条 target 为空的脏条目（会被 normalizeSandboxEntry 丢弃），不如不留。
+ */
+const AGENT_EXEC_TOOLS: Record<string, { kind: SandboxKind; argKey: string }> = {
+  write_file: { kind: 'path', argKey: 'path' },
+  write: { kind: 'path', argKey: 'path' },
+  edit_file: { kind: 'path', argKey: 'path' },
+  edit: { kind: 'path', argKey: 'path' },
+  run_command: { kind: 'command', argKey: 'command' },
+  bash: { kind: 'command', argKey: 'command' },
+  powershell: { kind: 'command', argKey: 'command' },
+  user_bash: { kind: 'command', argKey: 'command' },
+};
+
+export interface AgentExecAuditInput {
+  tool: string;
+  kind: SandboxKind;
+  target: string;
+  decision: SandboxDecision;
+  reason?: string;
+}
+
+export function agentExecAudit(
+  name: unknown,
+  args: unknown,
+  isError: boolean,
+  resultText?: string,
+): AgentExecAuditInput | null {
+  if (typeof name !== 'string') return null;
+  const rule = AGENT_EXEC_TOOLS[name];
+  if (!rule) return null;
+  const target = args && typeof args === 'object'
+    ? String((args as Record<string, unknown>)[rule.argKey] ?? '').trim()
+    : '';
+  if (!target) return null;
+  const out: AgentExecAuditInput = {
+    tool: name,
+    kind: rule.kind,
+    target,
+    decision: isError ? 'error' : 'allowed',
+  };
+  if (isError) out.reason = clip(resultText ?? '', 160) || '执行失败（无输出）';
+  return out;
+}
+
 export interface SandboxLogQuery {
   /** 全文关键词（tool / target / reason / sessionId，大小写不敏感）。 */
   keyword?: string;

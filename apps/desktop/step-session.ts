@@ -21,6 +21,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { resolveStepCheckout, type ComposedStepExtension } from './step-extension';
+import { agentExecAudit, type AgentExecAuditInput } from './sandbox-log';
 import {
   configFingerprint,
   pickDefaultModel,
@@ -122,6 +123,11 @@ export type StepSessionHost = {
   notifyAgentDelta: (sessionId: string, text: string) => void;
   /** 工具步骤（沿用 orchdesk:tool-step 通道）。 */
   notifyToolStep: (sessionId: string, name: string, ph: 'running' | 'done' | 'error', result?: string) => void;
+  /**
+   * BUG-053：Agent 在锁定点内执行完一次变更 / 命令类工具后，把结果交给宿主的沙箱审计。
+   * 本模块不认识 sandbox-log 的落盘细节，只把已经归一好的判定交出去。
+   */
+  recordToolRun: (entry: AgentExecAuditInput & { sessionId?: string }) => void;
   /** 界面上下文：确认走本 GUI 弹窗，其余方法在主进程里都是空操作。 */
   uiContext: () => StepUiContext;
   /**
@@ -354,6 +360,9 @@ export async function runStepSessionTurn(
     throw err;
   }
   const toolSteps: NonNullable<StepTurnResult['tools']> = [];
+  // tool_execution_end 不带 args（锁定包只在 start 事件里给），而审计要记的是「对哪个
+  // 路径 / 哪条命令」执行的，所以按 toolCallId 暂存 start 的入参，end 时配对取回。
+  const startedArgs = new Map<string, unknown>();
 
   const unsubscribe = session.subscribe((event) => {
     if (ac.signal.aborted) return;
@@ -367,6 +376,8 @@ export async function runStepSessionTurn(
       }
       if (event.type === 'tool_execution_start') {
         const name = String((event as { toolName?: unknown }).toolName || '');
+        const callId = String((event as { toolCallId?: unknown }).toolCallId || '');
+        if (callId) startedArgs.set(callId, (event as { args?: unknown }).args);
         if (name) {
           toolSteps.push({ n: name, ph: 'running' });
           host.notifyToolStep(sid, name, 'running');
@@ -375,12 +386,19 @@ export async function runStepSessionTurn(
       }
       if (event.type === 'tool_execution_end') {
         const name = String((event as { toolName?: unknown }).toolName || '');
+        const callId = String((event as { toolCallId?: unknown }).toolCallId || '');
+        const args = startedArgs.get(callId);
+        startedArgs.delete(callId);
         const result = (event as { result?: unknown }).result;
         const isError = (event as { isError?: unknown }).isError === true;
         const textOut = typeof result === 'string' ? result : collectText(result);
         if (name) {
           toolSteps.push({ n: name, ph: isError ? 'error' : 'done', result: textOut });
           host.notifyToolStep(sid, name, isError ? 'error' : 'done', textOut);
+          // BUG-053：沙箱日志此前只覆盖本壳自己的调用点，Agent 真正执行工具的这条
+          // 路一条都不留。映射不到（只读工具、取不到对象）就不留，不编造条目。
+          const audit = agentExecAudit(name, args, isError, textOut);
+          if (audit) host.recordToolRun({ ...audit, sessionId: sid });
         }
       }
     } catch {
