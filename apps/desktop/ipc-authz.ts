@@ -108,9 +108,14 @@ export function registerAuthzIpc(ipc: IpcMain, deps: AuthzIpcDeps): void {
   // ---------------------------------------------------------------------------
   // PRD FR-9：授权白名单（操作类型 + 路径白名单，可查看可撤销）
   // ---------------------------------------------------------------------------
-  // 粒度三选一此前只实现了「单次」——每次写同一个文件都要重新点确认。
-  // 这里补 session / permanent 两种记住粒度；持久化走 dsh-runtime 写穿落盘
-  // （authz-grants.json），撤销立即生效并全部入审计。
+  // 现状（本机实测，别照这段注释理解行为）：`getAuthz()` 返回的 authzService 恒为 null
+  // （见 BUG-043），所以下面三条 handler 只会回 `[]` 或「授权服务未加载」；
+  // `persistGrants()` 调的 `dsh-runtime.persistGrantsNow()` 恒 false（`dsh-runtime.ts:111`），
+  // `hydrateGrants()` 恒 0 且**没有任何调用方**（`dsh-runtime.ts:121`）——dsh 卸下后这条
+  // 持久化路径是空壳，旧注释里「写穿落盘 authz-grants.json、撤销立即生效」描述的行为今天不存在。
+  // 用户机器上确实还躺着历史遗留的 authz-grants.json（本机 9 条 permanent shell_command 授权），
+  // 本壳既不读也不清，因此当前无生效风险；但将来重新接 grants 时**不得**自动 hydrate 旧文件、
+  // 默默继承这些永久授权——见 BUG-046。
   ipc.handle('orchdesk:authz-list-grants', async () => {
     const authz = getAuthz();
     if (!authz?.listGrants) return [];
