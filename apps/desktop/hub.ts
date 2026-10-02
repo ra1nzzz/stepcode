@@ -10,7 +10,10 @@ import { DATA_FILE_NAMES, getDataDir } from './data-dir';
 // 真实联调：配对远程 Agent、主会话发任务、回收结果。不在本地 mock 绕过。
 //
 // 凭据安全（PLAN 红线）：配对凭据经 electron safeStorage 加密存储于
-// 规范化数据目录/hub.json（非 userData，避免换安装形态后丢失）；仅密文落盘；
+// 规范化数据目录/hub.json（非 userData，避免换安装形态后丢失）；**只有凭据是密文**，
+// url / handle / agentName 是可公开标识符，明文落盘才能跨重启续用（BUG-058）。
+// 读回时 decodeHubConfig 重验协议：把 hub.json 手改成外部 http 地址不会被当成有效配对，
+// 也就不会把 Bearer 凭据说明文送出去（与 BUG-054 同一条「出口处校验」口径）。
 // 无可用加密后端时拒绝存储明文。
 //
 // 协议（须与部署的 OrchClaw Hub 对齐；此处为真实 REST 客户端形态）：
@@ -25,6 +28,28 @@ export interface HubConfig {
   url: string;
   /** 配对凭据密文（safeStorage 加密后的 base64）。 */
   tokenCipher?: string;
+  /**
+   * Hub 在配对响应里给的句柄。它不是秘密（只是一个路径段），但必须落盘——
+   * 否则重启后 `paired` 恒 false，磁盘上那把密文既用不了也没法撤销（BUG-058）。
+   */
+  handle?: string;
+  agentName?: string;
+}
+
+/**
+ * 读取磁盘上的 Hub 配置：只认字符串字段，脏类型一律丢弃；
+ * url 连协议都不合式就整条当「未配对」——绝不能把 {url: 123} 这种形状拼进 fetch。
+ */
+export function decodeHubConfig(raw: unknown): HubConfig | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const url = typeof r.url === 'string' ? r.url.trim() : '';
+  if (!/^https:\/\//i.test(url) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(url)) return null;
+  const out: HubConfig = { url };
+  if (typeof r.tokenCipher === 'string' && r.tokenCipher) out.tokenCipher = r.tokenCipher;
+  if (typeof r.handle === 'string' && r.handle) out.handle = r.handle;
+  if (typeof r.agentName === 'string' && r.agentName) out.agentName = r.agentName;
+  return out;
 }
 
 export interface PairResult {
@@ -77,7 +102,7 @@ function decryptToken(cipher: string): string {
 function readConfig(): HubConfig | null {
   try {
     const file = configFile();
-    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8')) as HubConfig;
+    if (fs.existsSync(file)) return decodeHubConfig(JSON.parse(fs.readFileSync(file, 'utf-8')));
   } catch {
     /* 损坏视为未配对 */
   }
@@ -104,10 +129,15 @@ export class HubClient {
     return this.cfg;
   }
 
+  /** 当前生效的句柄：本进程配对过用内存值，否则回落到落盘值（重启后仍能续用）。 */
+  private currentHandle(): string | null {
+    return this.handle ?? this.config()?.handle ?? null;
+  }
+
   status(): HubStatus {
     const cfg = this.config();
-    const paired = !!(cfg && cfg.tokenCipher && this.handle);
-    return { paired, url: cfg?.url, agentName: this.agentName || undefined };
+    const paired = !!(cfg && cfg.tokenCipher && this.currentHandle());
+    return { paired, url: cfg?.url, agentName: this.agentName ?? cfg?.agentName ?? undefined };
   }
 
   /** 配对远程 Agent（凭据加密存储）。 */
@@ -137,7 +167,7 @@ export class HubClient {
       if (!res.ok) return { ok: false, reason: `配对失败 HTTP ${res.status}` };
       const data = (await res.json()) as { handle?: string; agentName?: string };
       if (!data.handle) return { ok: false, reason: '配对响应缺少 handle' };
-      this.cfg = { url: url.trim(), tokenCipher: cipher };
+      this.cfg = { url: url.trim(), tokenCipher: cipher, handle: data.handle, ...(data.agentName ? { agentName: data.agentName } : {}) };
       this.cfgLoaded = true;
       this.handle = data.handle;
       this.agentName = data.agentName || null;
@@ -161,11 +191,12 @@ export class HubClient {
   /** 主会话向远程 Agent 发任务。 */
   async sendTask(text: string): Promise<SendResult> {
     const cfg = this.config();
-    if (!this.status().paired || !cfg || !this.handle) {
+    const handle = this.currentHandle();
+    if (!this.status().paired || !cfg || !handle) {
       return { ok: false, reason: '尚未配对或配对已失效' };
     }
     try {
-      const res = await fetch(`${cfg.url.replace(/\/$/, '')}/api/agent/${encodeURIComponent(this.handle)}/task`, {
+      const res = await fetch(`${cfg.url.replace(/\/$/, '')}/api/agent/${encodeURIComponent(handle)}/task`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...this.authHeaders() },
         body: JSON.stringify({ text }),
@@ -182,11 +213,12 @@ export class HubClient {
   /** 回收远程 Agent 回传结果。 */
   async getResult(taskId: string): Promise<TaskResult> {
     const cfg = this.config();
-    if (!this.status().paired || !cfg || !this.handle) {
+    const handle = this.currentHandle();
+    if (!this.status().paired || !cfg || !handle) {
       return { status: 'error', result: '尚未配对' };
     }
     try {
-      const res = await fetch(`${cfg.url.replace(/\/$/, '')}/api/agent/${encodeURIComponent(this.handle)}/result/${encodeURIComponent(taskId)}`, {
+      const res = await fetch(`${cfg.url.replace(/\/$/, '')}/api/agent/${encodeURIComponent(handle)}/result/${encodeURIComponent(taskId)}`, {
         headers: this.authHeaders(),
         signal: AbortSignal.timeout(10000),
       });
@@ -196,12 +228,6 @@ export class HubClient {
     } catch (err) {
       return { status: 'error', result: (err as Error).message };
     }
-  }
-
-  /** 解除配对（销毁内存 handle，保留加密凭据以便重连）。 */
-  unpair(): void {
-    this.handle = null;
-    this.agentName = null;
   }
 }
 
