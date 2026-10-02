@@ -837,6 +837,41 @@ function scanRule(rule, code, fileName) {
       '生产源码里出现已删除插件的路径引用（要么是真的重新接线，要么是悬挂注释，请手动处置）：' + offenders.join(', '));
   });
 
+  /* ---------------- R34：旧 OpenAI 回合循环的残留表面不得被生产代码接回去 ----------------
+   * 2026-10-02 逐符号引用计数实测：这九个符号在 apps/desktop 的 .ts 里除 agent-runtime.ts 自身外只剩注释提到，
+   * 而 `agent-runtime-verify.cjs` 一直在断言它们——链上那格绿读起来像产品能力，实际测的是残留表面（BUG-061）。
+   * 关键不是"死代码难看"：`extractToolCalls` 是从模型正文里猜工具调用，
+   * 接回任何真实回合就等于开一条注入放大路径（网页正文或被读文件里出现 `<tool:shell_command>{...}` 即可用）。
+   * 所以这条是**门**而不是记账：谁要复活它，必须先让 arch-guard 红一次、并在索引里留下决策，再改这份名单。
+   * 与 R33 相反，这里必须剥注释——悬挂提及（`data-dir.ts:418`、`session-merge.ts:35`）是合法的说明，不是接线。
+   */
+  await check('R34 旧回合循环的残留符号不得被生产代码引用', () => {
+    const DEAD_EXPORTS = [
+      'extractToolCalls', 'isKnownTool', 'buildSystemPrompt', 'formatToolResult',
+      'truncateForModel', 'buildAssistantToolCallMessage', 'buildToolResultMessage',
+      'normalizeHistory', 'TOOL_NAMES',
+    ];
+    const offenders = [];
+    let scanned = 0;
+    for (const abs of desktopTsFiles()) {
+      const rel = path.relative(APP_DIR, abs).replace(/\\/g, '/');
+      if (rel === 'agent-runtime.ts') continue;
+      scanned += 1;
+      const src = stripComments(read(abs));
+      for (const sym of DEAD_EXPORTS) {
+        const re = new RegExp('(?<![A-Za-z0-9_])' + sym + '(?![A-Za-z0-9_])');
+        if (re.test(src)) offenders.push(`${rel}: ${sym}`);
+      }
+    }
+    assert(scanned >= 40, 'R34 扫描面塌了：除 agent-runtime 外只扫到 ' + scanned + ' 个 .ts 文件');
+    const probe = 'rt.extractToolCalls(x);';
+    assert(/(?<![A-Za-z0-9_])extractToolCalls(?![A-Za-z0-9_])/.test(probe), 'R34 正控失配：这条调用本该被认出');
+    assert(!/(?<![A-Za-z0-9_])TOOL_NAMES(?![A-Za-z0-9_])/.test('const TOOL_NAMES_SAFE = 1;'),
+      'R34 反控失配：同名前缀的别的标识符不该误判');
+    assert(offenders.length === 0,
+      '生产代码接回了旧回合循环的残留表面（要先有决策记录，再改这份名单）：' + offenders.join(', '));
+  });
+
   /* ---------------- R12：数据目录单源（M3）——禁止 env 直读复辟 ---------------- */
 
   await check('R12 数据目录单源：除 data-dir.ts 与 main.ts 赋值点外禁止直读 ORCHDESK_DATA_DIR', () => {

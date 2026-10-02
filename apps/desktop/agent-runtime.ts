@@ -397,6 +397,17 @@ export function normalizeNativeToolCalls(raw: unknown): NativeToolCall[] {
 
 // ---------------------------------------------------------------------------
 // 文本兜底解析
+// -------------------------------------------------------------------------
+//
+// **本节与下面 `formatToolResult` / `buildSystemPrompt` 各段没有生产调用方**（2026-10-02 逐符号引用计数实测：
+// `extractToolCalls`、`isKnownTool`、`buildAssistantToolCallMessage`、`buildToolResultMessage`、
+// `normalizeHistory`、`truncateForModel`、`formatToolResult`、`buildSystemPrompt`、`TOOL_NAMES` 在
+// `apps/desktop` 的 .ts 里除了本文件自身之外只剩注释提到）。它们是旧 OpenAI 回合循环的残留：
+// 用户回合今天由 `step-session.ts` 交锁定点运行时执行，模型侧只经 `normalizeNativeToolCalls`（仍在 `model-client.ts` 活着）。
+// 今天只有 `agent-runtime-verify.cjs` 在断言这些行为，所以链上那一格绿**读起来像是产品能力，实际测的是残留表面**。
+// 为什么不直接接线回去：`extractToolCalls` 是从模型正文里"猜"工具调用，一旦放进任何真实回合，
+// 网页正文 / 被读文件内容里出现 `<tool:shell_command>{...}` 就成了可用注入放大位。
+// 复活它必须先做一次安全决策（BUG-061），arch-guard R34 会把"生产代码引用这些符号"当场判红。
 // ---------------------------------------------------------------------------
 
 export interface TextParseResult {
