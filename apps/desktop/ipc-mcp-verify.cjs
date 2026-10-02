@@ -84,6 +84,29 @@ const { check, summary } = createChecker();
     assert.strictEqual(l.servers[0].enabled, true);
   });
 
+  // 3b) BUG-062：以 `v1:` 开头的明文 env 必须照样加密、并能原样解回（形状歧义不能让它明文落盘 + 读回空串）
+  await check('env 值以 v1: 开头时仍按明文处理：加密落盘 + 解回原值', async () => {
+    const tricky = 'v1:looks-like-cipher';
+    const r = await save(null, {
+      id: 'm2', name: '歧义 MCP', command: 'node',
+      args: [path.join(HOME, 'no-such-mcp-server-2.js')],
+      env: { TOKEN: tricky },
+    });
+    assert.strictEqual(r.ok, true, '应保存成功: ' + JSON.stringify(r));
+    const file = path.join(HOME, 'mcp.json');
+    const raw = fs.readFileSync(file, 'utf-8');
+    assert.ok(!raw.includes(tricky), '以密文前缀开头的明文不该原样落盘');
+    const store = JSON.parse(raw);
+    const stored = store.servers.m2 && store.servers.m2.env && store.servers.m2.env.TOKEN;
+    assert.ok(typeof stored === 'string' && stored.length > 0, 'env 值应已写入');
+    const { isV1Cipher, decryptSecret } = require('./dist/credentials.js');
+    assert.ok(isV1Cipher(stored), '落盘值必须是本模块产出的密文形状，实际=' + String(stored).slice(0, 28));
+    assert.strictEqual(decryptSecret(stored), tricky, '解密必须回到原明文（此前这里静默返回空串）');
+    const l = await list(null);
+    assert.ok(!JSON.stringify(l).includes(tricky), '列表回显不得含 env 明文');
+    assert.strictEqual((await del(null, 'm2')).ok, true, '收尾删掉这条，别影响后续用例的条数');
+  });
+
   // 4) 停用 / 启用
   await check('mcp-set-enabled 停用后列表反映状态且不删配置', async () => {
     const r = await setEnabled(null, 'm1', false);
