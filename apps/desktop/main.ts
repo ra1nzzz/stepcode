@@ -359,6 +359,7 @@ function loadModelConfig(): ModelConfig {
     modelsFileUnreadable = true;
     return { providers: [], defaultProvider: 'ollama', defaultModel: DEFAULT_MODEL, maxToolIterations: MAX_TOOL_ITERATIONS_DEFAULT };
   }
+  let cfg: ModelConfig = { providers: [], defaultProvider: 'ollama', defaultModel: DEFAULT_MODEL, maxToolIterations: MAX_TOOL_ITERATIONS_DEFAULT };
   try {
     let migrated = false;
     const providers = (raw.providers as Array<Record<string, unknown>> | undefined)?.map(p => {
@@ -372,7 +373,7 @@ function loadModelConfig(): ModelConfig {
       }
       return prov;
     }) || [];
-    const cfg: ModelConfig = {
+    cfg = {
       providers,
       defaultProvider: (raw.defaultProvider as string | undefined) || 'ollama',
       defaultModel: (raw.defaultModel as string | undefined) || DEFAULT_MODEL,
