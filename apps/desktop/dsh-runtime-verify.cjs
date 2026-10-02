@@ -76,6 +76,33 @@ async function checkRuntime() {
   assert.equal(rows[0].ok, false, '回灌不得成功');
 }
 
+// BUG-046：「重新接 grants 持久化时不得自动回灌历史 authz-grants.json」此前只是
+// ipc-authz.ts 里的一句注释。注释不会失败，所以把它钉成三条断言：
+// ① 恒返回 0 的 `hydrateGrants` 空壳已经从 dsh-runtime.ts 删除，任何生产源码再出现这个名字即判红；
+// ② 没有任何 readFileSync/readFile 的入参提到 grants（无论是字面量还是变量名）；
+// ③ data-dir.ts 的文件名表里不许出现 authz-grants.json（登记成受管文件就等于给快照/备份带上它）。
+// 扫描是逐行的、且跳过注释行（注释里讨论这条不变量时必须能提这些名字）。
+check('旧授权白名单文件没有任何读取路径（BUG-046 已代码化）', () => {
+  const files = fs.readdirSync(APP).filter((f) => f.endsWith('.ts'));
+  const hits = [];
+  for (const f of files) {
+    const code = fs.readFileSync(path.join(APP, f), 'utf8')
+      .split('\n')
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .join('\n');
+    if (/\bhydrateGrants\b/.test(code)) hits.push(`${f}: 生产代码里又出现了 hydrateGrants`);
+    for (const m of code.matchAll(/(?:readFileSync|readFile|openSync)\s*\(([^;]{0,140})/g)) {
+      if (/grants/i.test(m[1])) hits.push(`${f}: 读取入参含 grants -> ${m[1].slice(0, 70)}`);
+    }
+  }
+  const dataNames = fs.readFileSync(path.join(APP, 'data-dir.ts'), 'utf8')
+    .split('\n')
+    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join('\n');
+  if (/authz-grants/i.test(dataNames)) hits.push('data-dir.ts 把 authz-grants.json 登记成了受管数据文件');
+  assert.deepEqual(hits, [], `旧 grants 回灌路径重新出现：\n        ${hits.join('\n        ')}`);
+});
+
 checkRuntime()
   .then(() => {
     passed += 1;

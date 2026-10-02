@@ -101,9 +101,3 @@ export function persistGrantsNow(): boolean {
 }
 
 
-
-export function hydrateGrants(): number {
-  return 0;
-}
-
-

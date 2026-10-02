@@ -110,12 +110,14 @@ export function registerAuthzIpc(ipc: IpcMain, deps: AuthzIpcDeps): void {
   // ---------------------------------------------------------------------------
   // 现状（本机实测，别照这段注释理解行为）：`getAuthz()` 返回的 authzService 恒为 null
   // （见 BUG-043），所以下面三条 handler 只会回 `[]` 或「授权服务未加载」；
-  // `persistGrants()` 调的 `dsh-runtime.persistGrantsNow()` 恒 false（`dsh-runtime.ts:111`），
-  // `hydrateGrants()` 恒 0 且**没有任何调用方**（`dsh-runtime.ts:121`）——dsh 卸下后这条
+  // `persistGrants()` 调的 `dsh-runtime.persistGrantsNow()` 恒 false（`dsh-runtime.ts:99`），
   // 持久化路径是空壳，旧注释里「写穿落盘 authz-grants.json、撤销立即生效」描述的行为今天不存在。
   // 用户机器上确实还躺着历史遗留的 authz-grants.json（本机 9 条 permanent shell_command 授权），
-  // 本壳既不读也不清，因此当前无生效风险；但将来重新接 grants 时**不得**自动 hydrate 旧文件、
-  // 默默继承这些永久授权——见 BUG-046。
+  // 本壳既不读也不清，因此当前无生效风险。那个恒返回 0、零调用方的 `hydrateGrants` 空壳
+  // 已从 dsh-runtime.ts 删除（BUG-046）：没有可被调用的函数，比留一个「填上就能自动回灌
+  // 旧永久授权」的空壳更稳；这条不变量由 `dsh-runtime-verify` 的
+  // 「旧授权白名单文件没有任何读取路径」钉住——将来真要重新接 grants 持久化，必须显式改掉
+  // 那条检查并让用户逐条重新授权。
   ipc.handle('orchdesk:authz-list-grants', async () => {
     const authz = getAuthz();
     if (!authz?.listGrants) return [];
