@@ -115,12 +115,18 @@ function makeFakeChild() {
     const env = {
       PATH: 'C:/Windows', NODE_OPTIONS: '--require shim.cjs', NODE_PATH: '/x',
       ELECTRON_RUN_AS_NODE: '1', ORCHDESK_PTY_MODULE: '/y', LANG: 'zh_CN.UTF-8',
+      ORCHDESK_HOME: 'C:/Users/x/AppData/Roaming/OrchDesk', ORCHDESK_DATA_DIR: 'C:/Users/x/AppData/Roaming/OrchDesk',
+      ORCHDESK_STEP_RUNTIME: 'D:/checkout/step',
     };
     const snapshot = JSON.stringify(Object.keys(env));
     const out = tt.sanitizeTerminalEnv(env);
     assert.strictEqual(out.PATH, 'C:/Windows', '正常变量保留');
     assert.strictEqual(out.LANG, 'zh_CN.UTF-8');
-    for (const k of tt.TERMINAL_ENV_STRIP) assert.ok(!(k in out), `${k} 必须剔除`);
+    for (const k of tt.CHILD_ENV_STRIP) assert.ok(!(k in out), `${k} 必须剔除`);
+    // BUG-049：数据目录定位变量必须剥掉——子进程不该知道本壳状态文件在哪。
+    for (const k of ['ORCHDESK_HOME', 'ORCHDESK_DATA_DIR', 'ORCHDESK_STEP_RUNTIME']) {
+      assert.ok(!(k in out), `${k} 必须被剔除（它指向本壳的数据目录）`);
+    }
     assert.strictEqual(JSON.stringify(Object.keys(env)), snapshot, '不得改原对象');
     assert.strictEqual(out.ORCHDESK_BROWSER_NO_SANDBOX, undefined);
   });

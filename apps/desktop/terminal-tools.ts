@@ -50,8 +50,15 @@ export const TERMINAL_CHUNK_MAX = 256 * 1024;
 /** 单会话回放缓冲上限（新接入的观察者能补看的历史行）。 */
 export const TERMINAL_REPLAY_MAX = 64 * 1024;
 
-/** 环境净化清单：这些变量会改变子进程 node 行为或把宿主调试态泄进终端。 */
-export const TERMINAL_ENV_STRIP = [
+/**
+ * 环境净化清单（终端与 MCP server 共用一份）：这些变量要么改变子进程的 node / Electron 行为，
+ * 要么把宿主调试态泄进子进程。BUG-049 补进三个**数据目录定位变量**——第三方 MCP server 与终端里的
+ * 任意命令只要看见 ORCHDESK_DATA_DIR / ORCHDESK_HOME，就能直接定位并改写本壳的状态文件
+ * （sandbox.json 的 mode / networkAllow / authMode 会在下次启动被采信；会话历史与凭据密文同目录）。
+ * 名字从 TERMINAL_ENV_STRIP 改成 CHILD_ENV_STRIP：它早就不止给终端用，而 MCP 侧另有一张三键小清单
+ * 各自漂移，那才是这次改动的根因。
+ */
+export const CHILD_ENV_STRIP = [
   'NODE_OPTIONS',
   'NODE_PATH',
   'ELECTRON_RUN_AS_NODE',
@@ -60,6 +67,9 @@ export const TERMINAL_ENV_STRIP = [
   'ORCHDESK_BROWSER_NO_SANDBOX',
   'ORCHDESK_SMOKE_CI',
   'PORT',
+  'ORCHDESK_HOME',
+  'ORCHDESK_DATA_DIR',
+  'ORCHDESK_STEP_RUNTIME',
 ];
 
 // ---------------------------------------------------------------------------
@@ -122,7 +132,7 @@ export function sanitizeTerminalEnv(
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
     if (v === undefined) continue;
-    if (TERMINAL_ENV_STRIP.includes(k)) continue;
+    if (CHILD_ENV_STRIP.includes(k)) continue;
     out[k] = v;
   }
   return out;

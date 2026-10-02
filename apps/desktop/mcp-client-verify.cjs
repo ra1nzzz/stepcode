@@ -56,6 +56,29 @@ rl.on('line', (line) => {
 
   /* ============================== A 组：纯逻辑 ============================== */
 
+  // BUG-049：MCP 子进程与终端共用同一份 env 剔除清单，特别是数据目录定位变量。
+  await check('buildChildEnv 剥掉宿主内部变量，但尊重 config.env 的显式覆盖', () => {
+    const saved = { ...process.env };
+    process.env.ORCHDESK_HOME = 'C:/Users/x/AppData/Roaming/OrchDesk';
+    process.env.ORCHDESK_DATA_DIR = 'C:/Users/x/AppData/Roaming/OrchDesk';
+    process.env.ORCHDESK_STEP_RUNTIME = 'D:/checkout/step';
+    process.env.NODE_OPTIONS = '--require shim.cjs';
+    process.env.KEEP_ME = 'ordinary-value';
+    try {
+      const env = MCP.buildChildEnv(undefined);
+      for (const k of ['ORCHDESK_HOME', 'ORCHDESK_DATA_DIR', 'ORCHDESK_STEP_RUNTIME', 'NODE_OPTIONS']) {
+        assert(!(k in env), `${k} 不该进 MCP 子进程 env`);
+      }
+      assert(env.KEEP_ME === 'ordinary-value', '普通变量必须保留');
+      const withExtra = MCP.buildChildEnv({ ORCHDESK_HOME: '/deliberate/path' });
+      assert(withExtra.ORCHDESK_HOME === '/deliberate/path', 'config.env 显式赋值必须赢过剔除');
+    } finally {
+      for (const k of ['ORCHDESK_HOME', 'ORCHDESK_DATA_DIR', 'ORCHDESK_STEP_RUNTIME', 'NODE_OPTIONS', 'KEEP_ME']) {
+        if (k in saved) process.env[k] = saved[k]; else delete process.env[k];
+      }
+    }
+  });
+
   await check('归一化：合法配置通过，字段齐全', () => {
     const r = MCP.normalizeMcpConfig({ id: 'fs', command: 'npx', args: ['-y', 'x'], env: { K: 'v' }, enabled: true });
     assert(r.ok === true, `应通过，实际 ${JSON.stringify(r)}`);

@@ -17,6 +17,7 @@
  *   - stdio 子进程必须带超时；握手/列工具/调工具各自独立超时，卡住不得挂起主会话。
  */
 import { spawn, type ChildProcess } from 'node:child_process';
+import { CHILD_ENV_STRIP } from './terminal-tools';
 
 // ============================================================================
 // 类型
@@ -107,8 +108,22 @@ const INIT_TIMEOUT_MS = 15000;
 const LIST_TIMEOUT_MS = 15000;
 const CALL_TIMEOUT_MS = 120000;
 
-/** 需从子进程 env 剔除的宿主污染变量（同 terminal-pty.ts 铁律）。 */
-const STRIP_ENV_KEYS = ['NODE_OPTIONS', 'NODE_PATH', 'ELECTRON_RUN_AS_NODE'] as const;
+/**
+ * BUG-049：子进程 env 一律走 `terminal-tools` 那份唯一的剔除清单。
+ * 这里原本自带一张只有三个键的私有清单，与终端侧各自漂移，且都不剥数据目录定位变量——
+ * 于是任何被配置的 MCP server 进程都能从 env 里读到 ORCHDESK_DATA_DIR / ORCHDESK_HOME。
+ * `config.env` 仍然最后覆盖：用户显式给某个变量赋值是他的决定，不是我们的泄漏。
+ */
+export function buildChildEnv(extra?: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === null || v === undefined) continue;
+    if (CHILD_ENV_STRIP.includes(k)) continue;
+    env[k] = v;
+  }
+  if (extra) Object.assign(env, extra);
+  return env;
+}
 
 /** MCP id 白名单：与 plugin-market.isMarketDirName 同纪律，防路径穿越。 */
 export function isMcpId(id: unknown): id is string {
@@ -219,13 +234,7 @@ export function connectMcpServer(
       resolve(r);
     };
 
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (v === null || v === undefined) continue;
-      if (STRIP_ENV_KEYS.includes(k as (typeof STRIP_ENV_KEYS)[number])) continue;
-      env[k] = v;
-    }
-    if (config.env) Object.assign(env, config.env);
+    const env = buildChildEnv(config.env);
 
     let child: ChildProcess;
     try {
@@ -338,13 +347,7 @@ export function callMcpTool(
       resolve(r);
     };
 
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (v === null || v === undefined) continue;
-      if (STRIP_ENV_KEYS.includes(k as (typeof STRIP_ENV_KEYS)[number])) continue;
-      env[k] = v;
-    }
-    if (config.env) Object.assign(env, config.env);
+    const env = buildChildEnv(config.env);
 
     let child: ChildProcess;
     try {
