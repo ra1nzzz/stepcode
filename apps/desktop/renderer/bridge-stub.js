@@ -38,7 +38,7 @@ window.orchdeskBridgeStub = {
       // TRACE 用户反馈（PRD FR-7）
       traceFeedback: () => Promise.resolve({ ok: false, reason: '主进程未接入' }),
       // 沙箱（PRD FR-8）
-      getSandbox: () => Promise.resolve({ mode: 'workspace-write', networkAllow: [] }),
+      getSandbox: () => Promise.resolve({ mode: 'workspace-write', modeLabel: '工作区内可写', networkAllow: [] }),
       setNetworkAllow: (list) => Promise.resolve({ ok: false, reason: '主进程未接入', networkAllow: list }),
       // PRD FR-8：沙箱日志检索（无桥时返回 null → loaded 保持 false，UI 标注未接入
       // 而不是假装「空日志」—— 这两种状态的处置完全不同）

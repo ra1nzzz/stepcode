@@ -27,6 +27,17 @@ export type SandboxIpcHost = {
 let host: SandboxIpcHost | undefined;
 let sandboxLog: SandboxLogEntry[] = [];
 /** 最近一次读到的授权模式（getMode 是异步的，日志只能留快照）。 */
+/**
+ * BUG-045：沙箱模式的界面口径。键集必须与 `host-services.ts` 的 SANDBOX_MODES 一致
+ * （由 `step-t4-verify` 的一致性断言钉住：主进程加了档位而这里漏一行，状态栏就会显示
+ * 「未识别档位」并被判红）。
+ */
+const SANDBOX_MODE_LABELS: Record<string, string> = {
+  'read-only': '只读',
+  'workspace-write': '工作区内可写',
+  'danger-full-access': '完全访问（危险）',
+};
+
 let lastAuthMode = '';
 
 export function initSandbox(deps: SandboxIpcHost): void {
@@ -117,9 +128,14 @@ export function registerSandboxIpc(ipc: IpcMain): void {
   // PRD FR-8：沙箱策略（模式 + 网络域名白名单）
   ipc.handle('orchdesk:sandbox-get', () => {
     const policy = getHostServices()?.sandboxPolicy;
-    if (!policy) return { unavailable: true, reason: '沙箱服务已停止', mode: '', networkAllow: [] };
+    if (!policy) return { unavailable: true, reason: '沙箱服务已停止', mode: '', modeLabel: '', networkAllow: [] };
+    const mode = policy.resolve?.().mode || '';
     return {
-      mode: policy.resolve?.().mode || '',
+      mode,
+      // BUG-045：`mode` 是机器标识，只能留在 IPC 边界里；界面要的是中文口径。
+      // 映射放在生产侧，渲染层拿不到、也不需要沙箱模式白名单。
+      // 未识别的取值不猜口径——留空串，由渲染层显示「未识别档位」，不冒充已知模式。
+      modeLabel: SANDBOX_MODE_LABELS[mode] ?? '',
       networkAllow: policy.getNetworkAllow ? policy.getNetworkAllow() : [],
     };
   });

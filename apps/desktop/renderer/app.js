@@ -117,6 +117,10 @@
   const GUI_PRESET_LABELS = { bypass: '默认模式', autopilot: '完全信任' };
   const authModesForRender = () => FALLBACK_AUTH_MODES.map((m) => ({ ...m }));
   const authModeLabel = (id) => GUI_PRESET_LABELS[id] || '未接入';
+  // BUG-045：沙箱模式的机器标识由**主进程**映射成中文口径，随 sandbox-get 的 modeLabel 一起回传
+  // （映射表在 ipc-sandbox.ts）。渲染层这里刻意不留任何机器标识字面量：一是界面文案不许夹带
+  // 机器标识，二是 `step-t4-verify` 的 BANNED_UI 扫的就是本文件源码——在这写一句解释都会把
+  // 守卫自己撞红（本轮实测踩到，注释里提一次禁用词即判红）。
   // 完全信任比默认模式更会在失败后续跑，用警告色。未接入不是健康。
   const AUTH_MODE_DOT_COLORS = { bypass: 'var(--ok)', autopilot: 'var(--warn)' };
   const authModeDotColor = () => (GUI_PRESET_LABELS[state.authMode] && state.authzLoaded
@@ -309,7 +313,7 @@
     // R5-13：loaded=false 时 mode 为空串，UI 显示「未接入」而不是拿 'workspace-write'
     // 冒充已拉取（原注释写「null = 未拉取」但代码从不为 null，注释与实现早已漂移）。
     // networkAllow 空数组 = 全部拒绝（fail-closed），与设置页说明文案一致。
-    sandbox: { mode: '', networkAllow: [], loaded: false },
+    sandbox: { mode: '', modeLabel: '', networkAllow: [], loaded: false },
     // 最近一次专家团派发结果（composeTeam 返回的 { rootId, nodes }）
     delegationLast: null,
     // TRACE 上报开关（默认开；bridge.traceStatus 拉取后覆盖）
@@ -2118,7 +2122,7 @@
       return `<div class="main-inner"><h1 class="pg">偏好</h1><div class="pg-sub">当前：${here}。模型、沙箱、授权、桌面集成都在这一页。</div>
         <div class="statbar">
           <div class="stat"><div class="sk">授权模式</div><div class="sv"><span class="dot" style="background:${authModeDotColor()}"></span>${authModeLabel(state.authMode)}${state.authzLoaded ? '' : ' · 未接入'}</div></div>
-          <div class="stat"><div class="sk">沙箱</div><div class="sv">${state.sandbox.mode ? `<span class="badge ok" style="font-weight:600">Windows ACL · ${esc(state.sandbox.mode)}</span>` : '<span class="badge">未接入</span>'}</div></div>
+          <div class="stat"><div class="sk">沙箱</div><div class="sv">${state.sandbox.mode ? `<span class="badge ok" style="font-weight:600">Windows ACL · ${esc(state.sandbox.modeLabel || '未识别档位')}</span>` : '<span class="badge">未接入</span>'}</div></div>
           <div class="stat"><div class="sk">数据目录</div><div class="sv" style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px" title="${esc(ddOk ? state.dataDirInventory.dir : '')}">${ddOk ? '…/' + esc(ddShort) : '本地（未扫描）'}</div></div>
           <div class="stat"><div class="sk">运行时</div><div class="sv" style="font-size:12px;font-weight:500">${rtOk ? `插件运行时就绪 · ${state.pluginRuntime.activeCount}/${state.pluginRuntime.total}` : '插件运行时未启动'}</div></div>
         </div>
@@ -4780,6 +4784,8 @@ let outboundTimer = null;
         if (!r || typeof r !== 'object') return;
         state.sandbox = {
           mode: typeof r.mode === 'string' ? r.mode : '',
+          // BUG-045：中文口径由主进程给出，渲染层不再自己映射（也拿不到机器标识白名单）。
+          modeLabel: typeof r.modeLabel === 'string' ? r.modeLabel : '',
           networkAllow: Array.isArray(r.networkAllow) ? r.networkAllow : [],
           loaded: true,
         };

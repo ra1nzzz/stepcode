@@ -181,6 +181,26 @@ async function main() {
     }
   });
 
+  // BUG-045：BANNED_UI 只扫渲染层源码，看不见「主进程回传的机器标识被直接插进正文」这一形态。
+  // 状态栏的沙箱档位就是这种形态——界面口径改由 ipc-sandbox 生产，这里钉两件事：
+  // ① 每个机器标识都有中文口径（主进程加档位而渲染侧漏映射 → 判红，不是运行时才看见「未识别档位」）；
+  // ② 渲染层不再插原始 mode。
+  await check('沙箱档位的界面口径与机器标识白名单同源', async () => {
+    const hs = fs.readFileSync(path.join(__dirname, 'host-services.ts'), 'utf-8');
+    const sb = fs.readFileSync(path.join(__dirname, 'ipc-sandbox.ts'), 'utf-8');
+    const appSrc = fs.readFileSync(path.join(__dirname, 'renderer', 'app.js'), 'utf-8');
+    const decl = hs.match(/const SANDBOX_MODES: SandboxMode\[\] = \[([\s\S]*?)\];/);
+    assert.ok(decl, 'host-services.ts 里的 SANDBOX_MODES 不见了，本断言要同步');
+    const modes = [...decl[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+    assert.ok(modes.length >= 1, 'SANDBOX_MODES 解析为空');
+    for (const m of modes) {
+      assert.ok(sb.includes(`'${m}':`), `ipc-sandbox 缺档位 ${m} 的中文口径`);
+    }
+    assert.equal(/Windows ACL · \$\{esc\(state\.sandbox\.mode\)}/.test(appSrc), false,
+      '状态栏仍在把机器标识直接插进正文');
+    assert.ok(appSrc.includes('state.sandbox.modeLabel'), '状态栏没走主进程给的界面口径');
+  });
+
   await check('IPC 不透传已卸下的三档', async () => {
     const { real } = await loadLocked();
     const handlers = new Map();

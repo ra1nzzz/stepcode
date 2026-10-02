@@ -87,7 +87,7 @@ const orchdesk = {
   abortAgentTurn: (sessionId: string): Promise<{ ok: boolean; reason?: string }> =>
     ipcRenderer.invoke('orchdesk:abort-agent-turn', sessionId),
 
-  /** 授权模式（T-P3-2）：读取当前生效的 AuthzMode（default/trusted/paranoid）。 */
+  /** 授权模式（T-P3-2）：读取当前生效的 GUI 档（bypass / autopilot）；Step 运行时未接入时拿不到值。 */
   getAuthMode: (): Promise<{ mode: string }> =>
     ipcRenderer.invoke('orchdesk:authz-get-mode'),
 
@@ -423,7 +423,7 @@ const orchdesk = {
 
   // ---- PRD FR-8 沙箱 ----
   /** 沙箱策略快照（模式 + 网络域名白名单）。 */
-  getSandbox: (): Promise<{ mode: string; networkAllow: string[] }> =>
+  getSandbox: (): Promise<{ mode: string; modeLabel: string; networkAllow: string[] }> =>
     ipcRenderer.invoke('orchdesk:sandbox-get'),
 
   /** 设置网络请求域名白名单（['*'] = 不限）。 */

@@ -292,7 +292,7 @@ async function run() {
       // PRD FR-7：TRACE 用户反馈（v0.10.1 起的真实落点）
       traceFeedback: () => Promise.resolve({ ok: true, queue: { pending: 1, retry: 0, errors: 0 } }),
       // PRD FR-8：沙箱策略（网络域名白名单）
-      getSandbox: () => Promise.resolve({ mode: 'workspace-write', networkAllow: [] }),
+      getSandbox: () => Promise.resolve({ mode: 'workspace-write', modeLabel: '工作区内可写', networkAllow: [] }),
       setNetworkAllow: (list) => Promise.resolve({ ok: true, networkAllow: list || ['*'] }),
       // PRD FR-4.2：桌面集成 6 开关（此前设置页是 data-action="todo" 空壳）
       getDesktop: () => Promise.resolve({
