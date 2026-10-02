@@ -2316,7 +2316,7 @@
           ${desktopItem('tray', '系统托盘', '关闭窗口后继续运行')}
           ${desktopItem('shortcut', '全局快捷键', state.desktop && state.desktop.shortcutLabel ? state.desktop.shortcutLabel : 'Ctrl+Shift+Space', true)}
           ${desktopItem('autostart', '登录自启动', desktopAutostartDesc())}
-          ${desktopItem('autoupdate', '自动更新', '新版本静默下载（退出时安装）')}
+          ${desktopItem('autoupdate', '自动更新', '启动时检查新版本并提醒；不自动下载，安装前先确认')}
           ${desktopItem('floating', '悬浮窗', '桌面常驻小窗，点击唤起主窗')}
           ${desktopItem('notify', '开机提醒', '关键事件系统通知')}
           <div class="desktop-item"><div><div class="di-name">TRACE 遥测</div><div class="di-desc" id="trace-desc">未启用：trace 随 dsh 卸下且不迁移，本壳不向任何仓库上报</div></div><div class="switch ${state.traceEnabled ? 'on' : ''}" id="trace-switch" data-action="trace-toggle"></div></div>
@@ -3004,7 +3004,10 @@
         state.turnStopped = { id: s.id, at: Date.now() };
         toast('已停止生成', 'warn');
       }
-      else toast(`已入会话日志 · ${state.selectedModels.length} 模型 · 思维 ${thinkLabel(state.thinkLevel)}`, 'ok');
+      // BUG-040：主进程 run-agent-turn 把 opts（models / thinkLevel）整个丢弃——
+      // step-session.ts 只按 GUI 配置的默认提供商/模型跑一回合。原 toast 声称
+      // 「N 模型 · 思维 X」，是把没发生的事报成发生了（铁律：UI 不得声称未提供的行为）。
+      else toast('回合完成 · 已写入会话日志', 'ok');
     } catch (err) {
       s.msgs[typingIdx] = { r: 'agent', t: nowTime(), x: '（模型回合失败：' + (err && err.message ? err.message : err) + '）' };
       delete state.toolSteps[s.id];
@@ -4796,7 +4799,10 @@ let outboundTimer = null;
       // 和主区一律显示「暂无」——把「桥未接入/读取失败」说成「真的没有临时插件」
       // （本项目自己踩过三次的 null 当空数组坑）。
       bridge.listTempPlugins().then((r) => {
-        state.tempPluginsLoaded = true;
+        // BUG-040④：主进程桥在 dsh 卸下后回的是 `{ok:false}`（Promise 正常 resolve，
+        // 走不到 catch）。旧代码无条件把 loaded 置真，于是界面显示「暂无临时插件」——
+        // 把「读取失败/未接入」说成「确实一个都没有」。只有真是数组才算加载成功。
+        state.tempPluginsLoaded = Array.isArray(r);
         if (Array.isArray(r)) state.tempPlugins = r;
       }).catch(() => { state.tempPluginsLoaded = false; }),
       // 浏览器（ADR-0011）：启动即同步一次状态，标题栏入口才能如实显示开/关

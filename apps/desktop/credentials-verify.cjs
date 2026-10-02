@@ -205,6 +205,11 @@ const cred = require('./dist/credentials.js');
       out.recovered = await save({ providers: [prov('a', 'A'), prov('b', 'B')] });
       out.recoveredCount = (read()?.providers || []).length;
 
+      // 5) 默认提供商被删掉后不得留悬空引用：下一回合会去读一个不存在的提供商
+      fs.writeFileSync(FILE, JSON.stringify({ providers: [prov('a', 'A'), prov('b', 'B')], defaultProvider: 'a' }), 'utf-8');
+      out.dangling = await save({ providers: [prov('b', 'B')], defaultProvider: 'a' });
+      out.danglingDefault = read()?.defaultProvider;
+
       console.log('RESULT2_JSON:' + JSON.stringify(out));
       process.exit(0);
     })().catch((e) => { console.log('ERR:' + e.message); process.exit(1); });
@@ -248,6 +253,12 @@ const cred = require('./dist/credentials.js');
   await check('文件修好后同一通道恢复可写（守卫不钉死产品）', () => {
     assert.strictEqual(g.recovered.ok, true, `恢复后应能保存，实际 ${JSON.stringify(g.recovered)}`);
     assert.strictEqual(g.recoveredCount, 2, '恢复保存应落 2 个提供商');
+  });
+
+  await check('默认提供商被删后自动兜底，不留悬空引用（守卫反证）', () => {
+    assert.strictEqual(g.dangling.ok, true, `删除保存本身应成功：${JSON.stringify(g.dangling)}`);
+    assert.strictEqual(g.danglingDefault, 'b',
+      `defaultProvider 指向已删的 a 时必须兜到现存提供商，实际落盘为 ${JSON.stringify(g.danglingDefault)}`);
   });
 
   try { fs.rmSync(HOME2, { recursive: true, force: true }); } catch {}

@@ -662,12 +662,18 @@ function installSessionActions(ACTIONS, ctx) {
   async function act_model_del_provider_confirm(el, id, e) {
     ctx.closeModal();
  {
-        ctx.state.modelProviders = (ctx.state.modelProviders || []).filter(x => x.id !== el.dataset.id);
-        const r = await ctx.bridge.saveModelConfig({ providers: ctx.state.modelProviders, defaultProvider: ctx.state.defaultProvider });
+        const prevProviders = ctx.state.modelProviders || [];
+        const nextProviders = prevProviders.filter(x => x.id !== el.dataset.id);
+        ctx.state.modelProviders = nextProviders;
+        const r = await ctx.bridge.saveModelConfig({ providers: nextProviders, defaultProvider: ctx.state.defaultProvider });
         if (r && r.ok) {
           try { const mc = await ctx.bridge.getModelConfig(); if (mc && mc.providers) ctx.dynamicModels.list = mc.providers.flatMap(p => p.models.map(n => ({ n, p: p.name + ' · ' + p.type, k: '(本地)', state: '已配' }))); } catch { ctx.dynamicModels.list = []; }
           ctx.toast('提供商已删除', 'warn'); ctx.renderModelProviders();
-        } else { ctx.toast('删除失败', 'danger'); }}
+        } else {
+          ctx.state.modelProviders = prevProviders;   // 主进程拒了就退回去，不留半应用态
+          ctx.toast(`删除失败：${(r && r.reason) || '主进程未应答'}`, 'danger');
+          ctx.render();
+        }}
   
   }
 
@@ -765,7 +771,13 @@ function installSessionActions(ACTIONS, ctx) {
           else providers.push(provider);
           ctx.state.mpEditing = null;
         } else {
-          const id = name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+          // id 只当机器标识，不能拿显示名直接铸：`replace(/[^a-z0-9]/g,'-')` 把纯中文名
+          // 折叠成 '--'，两个中文名必撞；主进程虽拒绝新引入的重复，但提示用户「改一个可区分
+          // 的名字」对中文名是死路（改名后折叠结果照样是 '--'）。保底：折叠为空用 provider，
+          // 再撞就加序号，让渲染层这一路不可能产重复。
+          const base = (name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/^-+|-+$/g, '') || 'provider');
+          let id = base;
+          for (let n = 2; providers.some((p) => p.id === id); n += 1) id = `${base}-${n}`;
           providers.push({ id, name, type, apiMode, baseUrl: url, models, apiKey: key, presetId });
         }
         const r2 = await ctx.bridge.saveModelConfig({ providers, defaultProvider: type === 'ollama' ? providers[providers.length - 1]?.id : (ctx.state.defaultProvider || providers[0]?.id) });

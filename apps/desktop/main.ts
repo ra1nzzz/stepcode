@@ -881,6 +881,15 @@ ipcMain.handle('orchdesk:models-save', async (_e, config: unknown) => {
       return { ok: false, reason: `系统密钥库不可用，API Key 未保存（拒绝明文落盘）：${droppedKey.join('、')}` };
     }
     if (incoming.defaultProvider) current.defaultProvider = incoming.defaultProvider;
+    // 默认提供商必须真的存在：删掉正被使用的那一个之后，旧实现会把指向已删 id 的
+    // defaultProvider 继续落盘，下一回合去读一个不存在的提供商。兜到第一个可用项并留一行 WARN。
+    if (current.providers.length && !current.providers.some((p) => p.id === current.defaultProvider)) {
+      const fallback = current.providers[0]?.id;
+      if (fallback) {
+        log('WARN', 'models', `默认提供商 ${current.defaultProvider} 已不存在，改指 ${fallback}`);
+        current.defaultProvider = fallback;
+      }
+    }
     if (incoming.defaultModel) current.defaultModel = incoming.defaultModel;
     // 与运行时钳制一致（1–500，单源常量 MAX_TOOL_ITERATIONS_CAP），保证所见即所得。
     if (incoming.maxToolIterations) current.maxToolIterations = Math.max(1, Math.min(MAX_TOOL_ITERATIONS_CAP, incoming.maxToolIterations));
