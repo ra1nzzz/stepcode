@@ -502,6 +502,19 @@ async function approvalGate(toolName: string, reason: string, sessionId?: string
 /** 取可下发 IPC 的渲染窗口：mainWindow 优先，回退首个未销毁窗。
  * 桌面集成开启后悬浮窗先建排第 0，但无 preload 不订阅业务事件，不能当推送目标。
  * 全库此前散落 4 份同款三元式（浏览器状态/终端数据/终端退出/工具步骤），统一收口。 */
+/**
+ * 只有带 preload 的主窗能应答审批。`rendererWindow()` 的兜底是「任意活着的窗」，
+ * 那个兜底给通知类通道是有意的（主窗重建后不断流），但用在确认门上会出事：
+ * 悬浮窗 / 内置浏览器窗都没有 preload，不订阅 `orchdesk:approval-request`，
+ * `hasWindow()` 却为真 → 弹窗发给死窗 → 危险命令要等满 APPROVAL_TIMEOUT_MS（120s）
+ * 才被超时兜底拒绝。同一形态的「发给死窗」缺陷本文件 notifyToolStep 已记过一次。
+ */
+function hasBridgeWindow(): boolean {
+  try {
+    return !!bootDesktop.mainWindow && !bootDesktop.mainWindow.isDestroyed();
+  } catch { return false; }
+}
+
 function rendererWindow(): BrowserWindow | null {
   try {
     if (bootDesktop.mainWindow && !bootDesktop.mainWindow.isDestroyed()) return bootDesktop.mainWindow;
@@ -946,7 +959,7 @@ async function bootRuntime(): Promise<void> {
 
 function guiStepConfirm() {
   return createGuiStepConfirm({
-    hasWindow: () => rendererWindow() != null,
+    hasWindow: hasBridgeWindow,
     send: sendToRenderer,
     nextId: nextApprovalId,
     wait: waitForGuiDecision,

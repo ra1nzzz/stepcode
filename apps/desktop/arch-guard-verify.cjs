@@ -487,6 +487,24 @@ function scanRule(rule, code, fileName) {
     assert(leaks.length === 0, `以下位置会把注释当正文渲染给用户：\n${leaks.join('\n')}`);
   });
 
+  // ---------------- R22：确认门的 hasWindow 必须只认带 preload 的主窗 ----------------
+  // 用 // 行注释写标题：块注释里嵌注释的闭合形态会提前结束注释（本轮踩过一次）。
+
+  await check('R22 危险命令确认门不得用「任意活窗」兜底', () => {
+    // 悬浮窗与内置浏览器窗都没有 preload，收不到 `orchdesk:approval-request`。
+    // hasWindow 若走 rendererWindow() 的任意窗兜底，确认会发给死窗，
+    // 危险命令要等满 APPROVAL_TIMEOUT_MS（120s）才被超时拒绝。
+    const mainSrc = stripComments(read(path.join(APP_DIR, 'main.ts')));
+    assert(/hasWindow:\s*hasBridgeWindow/.test(mainSrc), 'main.ts 的 hasWindow 必须挂 hasBridgeWindow');
+    assert(!/hasWindow:\s*\(\)\s*=>\s*rendererWindow/.test(mainSrc),
+      'hasWindow 不得退回 rendererWindow() 的任意窗兜底');
+    // 正控：两条判据确实能抓到坏形态。
+    assert(/hasWindow:\s*\(\)\s*=>\s*rendererWindow/.test("hasWindow: () => rendererWindow() != null,"),
+      'R22 正控失配（坏形态抓不到）');
+    // 通知类通道仍允许兜底（主窗重建后不断流），所以只禁确认门这一处。
+    assert(mainSrc.includes('function rendererWindow'), 'rendererWindow 仍应存在，供通知类通道使用');
+  });
+
   /* ---------------- R12：数据目录单源（M3）——禁止 env 直读复辟 ---------------- */
 
   await check('R12 数据目录单源：除 data-dir.ts 与 main.ts 赋值点外禁止直读 ORCHDESK_DATA_DIR', () => {
