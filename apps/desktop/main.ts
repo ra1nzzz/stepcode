@@ -44,6 +44,7 @@ import {
   candidateLegacyDirs,
   mergeProvidersData,
   mergeSessionsData,
+  sanitizeIncomingProject,
   migrateDataDirs,
   migrateDataFiles,
   formatBytes,
@@ -1308,7 +1309,11 @@ ipcMain.handle('orchdesk:import-data', async () => {
     const curProjects = loadProjects();
     const srcProjects = Array.isArray(bundle.projects) ? bundle.projects as Array<Record<string, unknown>> : [];
     const known = new Set(curProjects.map((p) => String(p.id ?? '')));
-    const addProjects = srcProjects.filter((p) => p && p.id && !known.has(String(p.id)));
+    // BUG-047：条目形状先过白名单再落盘——过去这里只按 id 去重，内容一概不校验，
+    // 伪造备份可以塞进任意键，或把 path（渲染层用来显示「绑定目录」）写成带换行的任意文本。
+    const addProjects = srcProjects
+      .map((p) => sanitizeIncomingProject(p))
+      .filter((p): p is Record<string, unknown> => !!p && !known.has(String(p.id)));
     if (addProjects.length) {
       saveProjects([...curProjects, ...addProjects]);
       imported.projects = addProjects.length;

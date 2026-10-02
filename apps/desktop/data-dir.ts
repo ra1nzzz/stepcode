@@ -412,6 +412,72 @@ function isSessionEntry(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * BUG-047：进来的会话条目只保证「对象 + msgs 是数组」，其余字段一律原样采信。
+ * 伪造的备份（以及历史遗留的旧位置数据文件，走的是同一个合并器）因此可以往
+ * `orchdesk-sessions.json` 塞任意 `cwd`/`title`/`pid`。它们今天不会变成代码执行——
+ * `ipc-terminal.ts` 用前会 `statSync().isDirectory()` 校验、`buildSystemPrompt` 无调用方、
+ * 渲染层输出走 `esc()`——但换行能把任意文本混进「绑定目录」显示与落盘数据。
+ * 这里只剪掉确实危险的形态，不丢用户数据：
+ *   · `cwd`：含控制字符或超长 → 删掉这个键（宁可不绑目录，也不留一个假路径；
+ *     终端回落 `process.cwd()`，chip 回落工作目录设置）。
+ *   · `title`：含控制字符 → 删键；超长 → 截断（纯显示，截了不丢正确性）。
+ *   · `pid` / `expert` / `model`：非字符串或含控制字符 → 删键。
+ * `msgs` 不动：消息正文里的换行是用户内容，不是路径或标识。
+ */
+const SESSION_PATH_KEYS = ['cwd'] as const;
+const SESSION_LABEL_KEYS = ['title', 'expert', 'model', 'pid'] as const;
+const MAX_PATH_LEN = 512;
+const MAX_LABEL_LEN = 200;
+const CONTROL_RE = /[\r\n\u0000]/;
+
+function sanitizeIncomingSession(entry: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...entry };
+  for (const key of SESSION_PATH_KEYS) {
+    const v = out[key];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || CONTROL_RE.test(v) || v.length > MAX_PATH_LEN) {
+      delete out[key];
+      continue;
+    }
+  }
+  for (const key of SESSION_LABEL_KEYS) {
+    const v = out[key];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || CONTROL_RE.test(v)) {
+      delete out[key];
+    } else if (key === 'title' && v.length > MAX_LABEL_LEN) {
+      out.title = v.slice(0, MAX_LABEL_LEN);
+    }
+  }
+  return out;
+}
+
+/**
+ * BUG-047 的项目侧：导入分支过去只按 `id` 去重，条目内容一概不校验，
+ * 于是伪造备份可以塞进任意键、把 `path`（渲染层拿来显示「绑定目录」）写成带换行的任意文本。
+ * 规则与会话侧同口径：`id` 不合法就整条丢弃（没 id 的项目在渲染层本就不可寻址），
+ * 其余危险键只删键、不丢整条。
+ */
+const PROJECT_LABEL_KEYS = ['name', 'title', 'color', 'icon'] as const;
+
+export function sanitizeIncomingProject(entry: unknown): Record<string, unknown> | null {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const out: Record<string, unknown> = { ...(entry as Record<string, unknown>) };
+  const id = out.id;
+  if (typeof id !== 'string' || !id || CONTROL_RE.test(id) || id.length > 128) return null;
+  if (out.path !== undefined) {
+    const p = out.path;
+    if (typeof p !== 'string' || CONTROL_RE.test(p) || p.length > MAX_PATH_LEN) delete out.path;
+  }
+  for (const key of PROJECT_LABEL_KEYS) {
+    const v = out[key];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || CONTROL_RE.test(v) || v.length > MAX_LABEL_LEN) delete out[key];
+  }
+  return out;
+}
+
+/**
  * 会话合并：同 id 保留 updated 较新的一份，并把对方独有的消息并入。
  * 目标侧已有会话永不回退到旧版本。
  */
@@ -420,8 +486,11 @@ export function mergeSessionsData(target: unknown, source: unknown): MergeOutcom
   const dst = asRecord(target);
   let added = 0;
   let changed = false;
-  for (const [id, incoming] of Object.entries(src)) {
-    if (!isSessionEntry(incoming)) continue;
+  for (const [id, raw] of Object.entries(src)) {
+    if (!isSessionEntry(raw)) continue;
+    // BUG-047：进来的条目先剪掉危险形态再参与合并（下面按 updated 取新的那一份，
+    // 危险键可能在任一侧，所以清洗放在比较之前，不让它有机会被选为 newer）。
+    const incoming = sanitizeIncomingSession(raw);
     const cur = dst[id];
     if (!cur) {
       dst[id] = incoming;
