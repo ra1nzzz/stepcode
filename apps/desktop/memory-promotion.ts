@@ -17,7 +17,7 @@
  *   随记忆体积线性膨胀，且审计检索时多半只想看「晋升了什么」而不是「内容是什么」。
  */
 
-/** 四域（与 packages/plugin/memory 的 MemoryDomain 对齐，此处不引入依赖）。 */
+/** 四域（口径沿用原 memory 插件的 MemoryDomain，该插件已随九个 Cordis 插件删除；这里不引入依赖，本文件是唯一事实源）。 */
 export type MemoryDomainName = 'global' | 'project' | 'director' | 'worker';
 
 export const MEMORY_DOMAINS: MemoryDomainName[] = ['global', 'project', 'director', 'worker'];

@@ -814,6 +814,29 @@ function scanRule(rule, code, fileName) {
     assert(findings.length === 0, '有窗口没上弹窗门（弹窗可绕过宿主守卫并共享 session）：\n  ' + findings.join('\n  '));
   });
 
+  /* ---------------- R33：生产源码不得再引用已删除的插件路径 ----------------
+   * 起因是本仓真发生过一次「文件删了，指向它的同步指令留着」：
+   * `agent-runtime.ts` 里那段注释写着「packages/plugin/authz/src/index.ts 有一份同口径副本，改这里必须同步改那边」，
+   * 而那个插件目录已随九个 Cordis 插件一起删除（R11 已改成断言副本不存在）。
+   * 这种悬挂引用比缺注释更贵——它会指挥后来的人去改一个不存在的地方，或者以为自己漏做了同步。
+   */
+  await check('R33 生产源码不引用已删除的 packages/plugin 路径', () => {
+    const DEAD_RE = /packages\/plugin\/[A-Za-z0-9_./-]+/;
+    const offenders = [];
+    let scanned = 0;
+    for (const abs of desktopTsFiles()) {
+      scanned += 1;
+      const rel = path.relative(APP_DIR, abs).replace(/\\/g, '/');
+      const src = read(abs); // 故意不剥注释：这条要挡的就是注释里的悬挂引用
+      if (DEAD_RE.test(src)) offenders.push(rel);
+    }
+    assert(scanned >= 40, 'R33 扫描面塌了：只扫到 ' + scanned + ' 个 .ts 文件');
+    assert(DEAD_RE.test('见 packages/plugin/authz/src/index.ts'), 'R33 正控失配：这条悬挂引用本该被认出');
+    assert(!DEAD_RE.test('import { x } from ./agent-runtime'), 'R33 反控失配：普通相对路径不该判红');
+    assert(offenders.length === 0,
+      '生产源码里出现已删除插件的路径引用（要么是真的重新接线，要么是悬挂注释，请手动处置）：' + offenders.join(', '));
+  });
+
   /* ---------------- R12：数据目录单源（M3）——禁止 env 直读复辟 ---------------- */
 
   await check('R12 数据目录单源：除 data-dir.ts 与 main.ts 赋值点外禁止直读 ORCHDESK_DATA_DIR', () => {

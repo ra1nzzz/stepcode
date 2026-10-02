@@ -140,8 +140,10 @@ export const ALLOWED_COMMANDS: string[] = [
  * `&&` / `|` / `;` / `$()` 等拼接可让「白名单首词 + 任意后随命令」整条执行，
  * 是命令白名单被结构绕过的唯一入口。授权门确认的是「用户看过这条命令」，
  * 拦不住串本身携带的第二条命令。
- * 注意：packages/plugin/authz/src/index.ts 有一份同口径副本（插件不能 import app 代码），
- * arch-guard R11 机械校验两份正则文本一致——改这里必须同步改那边。
+ * 注意：authz 插件里那份同口径副本已随九个 Cordis 插件一起删除（路径已不存在，别去找它），
+ * 这条正则现在只有这一份定义（arch-guard R11 已改成「断言副本不复存在」）。
+ * 历史上这里写过「改这里必须同步改那边」——文件没了之后那句就成了误导，
+ * 所以那类指向已删文件的同步指令由 R33 机械挡住（生产源码里再出现那个路径即判红）。
  */
 const SHELL_METACHARS = /(?:&&|\|\||[&|;<>$`\n\r])/;
 export function hasShellMetachars(command: string): boolean {
