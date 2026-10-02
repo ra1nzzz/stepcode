@@ -285,7 +285,7 @@
     // 授权白名单（PRD FR-9）：会话 / 永久规则。dsh 授权服务已卸下，此域为空。
     grants: [],
     promptDocs: [], promptConflicts: [],
-    compAudit: [], tempPlugins: [], tempPluginsLoaded: false,
+    compAudit: [], compAuditLoaded: false, tempPlugins: [], tempPluginsLoaded: false,
     guanjiSkills: [], guanjiTokenSet: false, installedSkills: [], installedSkillsLoaded: false, askInputCb: null,
     hubStatus: { paired: false }, hubUrl: '', hubTaskText: '', hubResultText: '',
     memoryStats: null,
@@ -2262,7 +2262,9 @@
           </div>
           <div class="sec-title" style="margin:24px 0 8px">补偿层审计（边界外操作）</div>
           <div class="audit-log">
-            ${state.compAudit.length ? state.compAudit.slice().reverse().slice(0, 12).map((e) => `<div class="al"><span class="mono" style="font-size:11px">${new Date(e.ts).toLocaleTimeString('zh-CN')}</span><span class="badge warn">补偿</span><span class="mono faint">${esc(e.text || '')}</span>${e.note ? `<span class="faint">${esc(e.note)}</span>` : ''}</div>`).join('') : '<div class="faint">暂无补偿动作记录（外发/不可逆操作后在此提供「补偿动作」）</div>'}
+            ${state.compAudit.length ? state.compAudit.slice().reverse().slice(0, 12).map((e) => `<div class="al"><span class="mono" style="font-size:11px">${new Date(e.ts).toLocaleTimeString('zh-CN')}</span><span class="badge warn">补偿</span><span class="mono faint">${esc(e.text || '')}</span>${e.note ? `<span class="faint">${esc(e.note)}</span>` : ''}</div>`).join('') : (state.compAuditLoaded
+              ? '<div class="faint">暂无补偿动作记录（外发/不可逆操作后在此提供「补偿动作」）</div>'
+              : '<div class="faint">补偿动作记录未接入（主进程桥不可用）· 不是「没有补偿动作」</div>')}
           </div>
           <div class="row" style="margin-top:8px"><button class="btn sm" data-action="comp-record">+ 记录补偿动作</button><span class="faint">不保证完全撤销，仅尽力补偿</span></div>
           <div class="sec-title" style="margin:24px 0 8px">沙箱日志（可检索）</div>
@@ -4769,7 +4771,7 @@ let outboundTimer = null;
         // 从没进过 UI —— 用户看不到 worker 域到底有没有东西。
         if (r.domainCounts && typeof r.domainCounts === 'object') state.memory.stats = r.domainCounts;
       }).catch(() => {}),
-      bridge.getCompensationAudit().then(r => { if (Array.isArray(r)) state.compAudit = r; }).catch(() => {}),
+      bridge.getCompensationAudit().then(r => { state.compAuditLoaded = Array.isArray(r); if (Array.isArray(r)) state.compAudit = r; }).catch(() => { state.compAuditLoaded = false; }),
       // R5-13：networkAllow 非数组时兜底为空数组（全部拒绝），不再是 ['*']（悄悄放开全网）。
       // 原实现在主进程没返回白名单时把 UI 显示成「不限」，与同页「留空 = 全部拒绝
       // （fail-closed）」的说明直接矛盾——用户看到的和实际生效的是两回事。
