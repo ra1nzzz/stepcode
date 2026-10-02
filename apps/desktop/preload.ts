@@ -549,6 +549,10 @@ const orchdesk = {
     ipcRenderer.invoke('orchdesk:snapshot-data'),
   checkUpdates: (): Promise<{ snapshot: { ok: boolean; dir?: string }; update?: { available: boolean; version?: string; note?: string }; reason?: string }> =>
     ipcRenderer.invoke('orchdesk:check-updates'),
+  installDesktopUpdate: (): Promise<{ ok: boolean; reason?: string }> =>
+    ipcRenderer.invoke('orchdesk:install-desktop-update'),
+  applyCliUpdate: (): Promise<{ ok: boolean; path?: string; version?: string; reason?: string }> =>
+    ipcRenderer.invoke('orchdesk:apply-cli-update'),
   /**
    * 用系统默认文件管理器打开目录。
    * 传 `boundPath` = 打开该项目绑定的本地文件夹（项目 `··` 菜单）；

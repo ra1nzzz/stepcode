@@ -7,6 +7,8 @@ import type { IpcMain } from 'electron';
 import { app, shell } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { applyOfficialCliUpdate, describeCliCore } from './cli-process';
+import { desktopInstallDecision } from './cli-core';
 
 export interface DataOpsIpcDeps {
   dataDir: () => string;
@@ -80,18 +82,64 @@ function pruneSnapshots(snapshotsDir: string): number {
 }
 
 /** 更新前必须完成数据快照（PLAN 红线：不要更新后补）。 */
-export async function checkForUpdates(deps: DataOpsIpcDeps): Promise<{ snapshot: { ok: boolean; dir?: string }; update?: { available: boolean; version?: string; note?: string }; reason?: string }> {
+export async function checkForUpdates(deps: DataOpsIpcDeps): Promise<{ snapshot: { ok: boolean; dir?: string }; update?: { available: boolean; version?: string; note?: string }; cli?: { path?: string; current?: string; latest?: string; missing: boolean; updateAvailable: boolean; note: string }; reason?: string }> {
   const snapshot = snapshotData(deps);
   // 自动更新通道未启用：本仓库没有发布通道（docs/50-发布/发布状态.md）。
   // 这里原先指向 ra1nzzz/orchdesk 的 GitHub release，并开着 autoDownload +
   // autoInstallOnAppQuit —— 打包后会下载并安装另一个产品的二进制。
   // 要重新启用，先按 SPEC「本阶段不写：发布通道」记一条 ADR，再把 feed 指向本仓库。
-  return { snapshot, update: { available: false, note: '本仓库无发布通道，自动更新未启用' } };
+  // feed 指向本仓库。不自动下载、不自动安装：还没有第一个 release，
+  // 自动安装会在通道空着时没有可装的包。有了 release 之后，用户确认才装。
+  try {
+    const { autoUpdater } = await import('electron-updater');
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.setFeedURL({ provider: 'github', owner: 'ra1nzzz', repo: 'stepcode' });
+    const result = await autoUpdater.checkForUpdates();
+    const next = result && result.updateInfo ? result.updateInfo.version : undefined;
+    const current = autoUpdater.currentVersion ? autoUpdater.currentVersion.version : undefined;
+    const available = !!next && next !== current;
+    const cli = await describeCliCore();
+    return {
+      snapshot,
+      update: { available, version: next, note: available ? '桌面壳有新版本，需确认后安装' : '桌面壳已是最新' },
+      cli,
+    };
+  } catch (err) {
+    const cli = await describeCliCore().catch(() => ({ missing: true, updateAvailable: false, note: 'Agent 核检查失败' }));
+    return { snapshot, update: { available: false, note: '检查更新失败：' + ((err as Error).message || err) }, cli };
+  }
 }
 
+
+/** 用户已在界面点了安装。开发模式和未确认都不能替换正在跑的壳。 */
+export async function installDesktopUpdate(confirmed: boolean): Promise<{ ok: boolean; reason?: string }> {
+  let available = false;
+  try {
+    const { autoUpdater } = await import('electron-updater');
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.setFeedURL({ provider: 'github', owner: 'ra1nzzz', repo: 'stepcode' });
+    const result = await autoUpdater.checkForUpdates();
+    const next = result && result.updateInfo ? result.updateInfo.version : undefined;
+    const current = autoUpdater.currentVersion ? autoUpdater.currentVersion.version : undefined;
+    available = !!next && next !== current;
+    const gate = desktopInstallDecision({ packaged: app.isPackaged, available, confirmed });
+    if (!gate.ok) return { ok: false, reason: gate.reason };
+    await autoUpdater.downloadUpdate();
+    autoUpdater.quitAndInstall(false, true);
+    return { ok: true };
+  } catch (err) {
+    if (!confirmed) return { ok: false, reason: '没有确认，不安装桌面壳' };
+    if (!app.isPackaged) return { ok: false, reason: '开发模式不能替换自身。需要已安装的 NSIS 版，并且 GitHub 上已有本仓库的 release' };
+    return { ok: false, reason: (err as Error).message || String(err) };
+  }
+}
 export function registerDataOpsIpc(ipc: IpcMain, deps: DataOpsIpcDeps): void {
   ipc.handle('orchdesk:snapshot-data', async () => snapshotData(deps));
   ipc.handle('orchdesk:check-updates', async () => checkForUpdates(deps));
+  ipc.handle('orchdesk:install-desktop-update', async () => installDesktopUpdate(true));
+  ipc.handle('orchdesk:apply-cli-update', async () => applyOfficialCliUpdate());
 
   /**
    * 打开项目绑定的本地文件夹（项目 `··` 菜单）或数据目录（设置页）。

@@ -70,6 +70,7 @@ import { isAbsoluteLike, isProviderBaseUrlAllowed } from './common-tools';
 import { callModel as callModelHttp, initModelClient } from './model-client';
 import { initModelCatalog, refreshCatalogInBackground, getCatalogPresets, listAvailableModels } from './model-catalog';
 import { abortStepSession, hasActiveStepTurn, resetStepSessionCache, runStepSessionTurn, type StepSessionHost, type StepUiContext } from './step-session';
+import { abortCliTurn, cliCoreDisabled, findOfficialCli, hasActiveCliTurn, runCliCoreTurn } from './cli-process';
 import { executeTool, initToolExec, sessionCwd, setSessionCwd } from './tool-exec';
 import { registerBrowserIpc } from './ipc-browser';
 import { preloadTerminalPty, registerTerminalIpc } from './ipc-terminal';
@@ -699,7 +700,7 @@ ipcMain.handle('orchdesk:persist-sessions', async (_e, sessions: unknown[]) => {
   // 读-改-写竞态修复（复审项⑤）：渲染层快照整表替换会把 step-session 刚写入的
   // assistant 回复抹掉。合并策略见 session-merge.ts：msgs 去重合并（stored 优先），
   // 元数据取 incoming；snapshot 缺失视为删除，但进行中回合的会话不删。
-  const { merged, deleted } = mergeStores(store as Record<string, never>, (sessions || []) as never, { isActive: (id) => hasActiveStepTurn(id) });
+  const { merged, deleted } = mergeStores(store as Record<string, never>, (sessions || []) as never, { isActive: (id) => hasActiveStepTurn(id) || hasActiveCliTurn(id) });
   store = merged;
   if (deleted.length) log('INFO', 'sessions', `渲染层删除会话：${deleted.join(', ')}`);
   saveStore();
@@ -793,10 +794,13 @@ ipcMain.handle('orchdesk:run-agent-turn', async (_e, sessionId: unknown, text: u
   // TypeError 把整条链路带崩。预载层有 TS 标注，但 IPC 边界不能只靠类型。
   if (typeof sessionId !== 'string' || !sessionId) return { text: '', intent: 'ERROR', error: 'sessionId 不合法' };
   if (typeof text !== 'string' || !text) return { text: '', intent: 'ERROR', error: 'text 不合法（必须是非空字符串）' };
-  return runStepSessionTurn(sessionId, text, stepSessionHost);
+  return runDesktopAgentTurn(sessionId, text);
 });
 ipcMain.handle('orchdesk:abort-agent-turn', async (_e, sessionId: string) => {
-  return abortStepSession(String(sessionId || ''));
+  const id = String(sessionId || '');
+  const cliStopped = abortCliTurn(id);
+  const inProcess = abortStepSession(id);
+  return cliStopped || inProcess;
 });
 
 // ---- R5-01：本地版本源（状态栏显示用，不再向上游仓库要 commit） ----
@@ -1006,9 +1010,19 @@ async function bootRuntime(): Promise<void> {
     });
     stepCheckoutRoot = resolveStepCheckout();
     log('INFO', 'step', `进程内组合已接上，预设 ${wired.preset}`);
+    const cli = cliCoreDisabled() ? null : findOfficialCli();
+    log(cli ? 'INFO' : 'WARN', 'step', cli ? `Agent 核使用官方 CLI ${cli}` : '未找到官方 CLI，回合用包内核');
   } catch (err) {
     log('WARN', 'step', `进程内组合未接上（fail-closed）：${(err as Error).message}`);
   }
+}
+
+async function runDesktopAgentTurn(sessionId: string, text: string) {
+  // 装了官方 CLI 就用它。失败不偷偷换回包内核，否则更新了 CLI 界面仍在跑旧核。
+  if (!cliCoreDisabled() && findOfficialCli()) {
+    return runCliCoreTurn(sessionId, text, stepSessionHost);
+  }
+  return runStepSessionTurn(sessionId, text, stepSessionHost);
 }
 
 function guiStepConfirm() {

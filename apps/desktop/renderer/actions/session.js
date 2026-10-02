@@ -815,13 +815,43 @@ function installSessionActions(ACTIONS, ctx) {
   
   }
 
+  async function act_apply_cli_update() {
+    ctx.toast('正在更新 Agent 核…', 'ok');
+    try {
+      const r = await ctx.bridge.applyCliUpdate();
+      ctx.toast(r && r.ok ? `Agent 核已更新${r.version ? '到 ' + r.version : ''}。下一回合使用这份 CLI` : `Agent 核更新失败：${(r && r.reason) || ''}`, r && r.ok ? 'ok' : 'err');
+      ctx.closeModal && ctx.closeModal();
+    } catch (err) {
+      ctx.toast('Agent 核更新失败：' + (err && err.message || err), 'err');
+    }
+  }
+  async function act_install_desktop_update() {
+    ctx.toast('正在下载桌面壳…', 'ok');
+    try {
+      const r = await ctx.bridge.installDesktopUpdate();
+      ctx.toast(r && r.ok ? '桌面壳已开始安装' : `桌面壳安装失败：${(r && r.reason) || ''}`, r && r.ok ? 'ok' : 'err');
+    } catch (err) {
+      ctx.toast('桌面壳安装失败：' + (err && err.message || err), 'err');
+    }
+  }
   async function act_check_updates(el, id, e) {
  {
-        ctx.toast('正在先快照数据目录，然后检查更新…', 'ok');
+        ctx.toast('正在快照，并检查桌面壳与 Agent 核…', 'ok');
         const r = await ctx.bridge.checkUpdates();
         const snap = (r && r.snapshot && r.snapshot.ok) ? `数据快照：${r.snapshot.dir}` : '数据快照失败';
-        const upd = (r && r.update) ? (r.update.available ? `发现新版本 ${r.update.version}` : (r.update.note || '已是最新')) : (r && r.reason || '更新检查暂不可用');
-        ctx.toast(`${snap}\n${upd}`, (r && r.update && r.update.available) ? 'ok' : 'warn');
+        const upd = (r && r.update) ? (r.update.note || (r.update.available ? `桌面壳 ${r.update.version}` : '桌面壳已是最新')) : '桌面壳未检查';
+        const cli = (r && r.cli && r.cli.note) ? r.cli.note : 'Agent 核未检查';
+        ctx.toast(`${snap}\n${upd}\n${cli}`, (r && ((r.update && r.update.available) || (r.cli && r.cli.updateAvailable))) ? 'ok' : 'warn');
+        const buttons = [];
+        if (r && r.cli && (r.cli.updateAvailable || r.cli.missing)) {
+          buttons.push(`<button class="btn primary" data-action="apply-cli-update">${r.cli.missing ? '安装官方 CLI 作为核' : '更新 Agent 核'}</button>`);
+        }
+        if (r && r.update && r.update.available) {
+          buttons.push(`<button class="btn primary" data-action="install-desktop-update">安装桌面壳 ${ctx.esc(r.update.version || '')}</button>`);
+        }
+        if (buttons.length && ctx.openModal) {
+          ctx.openModal(`<div class="mh">${ctx.ic('zap', 18)}<b>更新</b></div><div class="mb"><div>${ctx.esc(upd)}</div><div style="margin-top:6px">${ctx.esc(cli)}</div></div><div class="mf"><button class="btn ghost" data-action="modal-cancel">取消</button>${buttons.join('')}</div>`);
+        }
         return;
       }
 
@@ -1188,6 +1218,8 @@ function installSessionActions(ACTIONS, ctx) {
 
     'todo': act_todo,
     'check-updates': act_check_updates,
+    'apply-cli-update': act_apply_cli_update,
+    'install-desktop-update': act_install_desktop_update,
     'modal-bg': act_modal_bg,
     'modal-cancel': act_modal_cancel,
     'browser-panel': act_browser_panel,

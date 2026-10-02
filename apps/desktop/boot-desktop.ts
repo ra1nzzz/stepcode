@@ -229,7 +229,7 @@ export function applyAutoUpdate(on: boolean): void {
       .then((r) => {
         const rec = r as { update?: { available?: boolean; note?: string; version?: string } } | undefined;
         if (rec?.update?.available) {
-          notifyDesktop('OrchDesk 有新版本', String(rec.update.note || `v${rec.update.version || ''} 已下载，退出后安装`));
+          notifyDesktop('StepCode Desktop 有新版本', String(rec.update.note || `v${rec.update.version || ''} 可安装，请在设置里确认`));
         }
       })
       .catch((err) => log('WARN', 'desktop', `自动更新检查异常：${(err as Error).message}`));
