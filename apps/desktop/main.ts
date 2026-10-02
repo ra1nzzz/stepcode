@@ -1005,6 +1005,14 @@ function guiStepConfirm() {
     send: sendToRenderer,
     nextId: nextApprovalId,
     wait: waitForGuiDecision,
+    // BUG-053：GUI 确认的批准/拒绝写进沙箱日志（PRD FR-8 的可检索判定必须覆盖 Agent 路径）。
+    record: (e) => recordSandbox({
+      tool: e.toolName,
+      kind: 'approval',
+      target: e.reason.slice(0, 200),
+      decision: e.decision,
+      reason: e.reason,
+    }),
   });
 }
 

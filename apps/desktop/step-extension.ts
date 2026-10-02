@@ -90,6 +90,8 @@ export interface GuiConfirmDeps {
   send: (channel: string, payload: unknown) => void;
   nextId: () => string;
   wait: (id: string, signal?: AbortSignal) => Promise<string>;
+  /** BUG-053：把判定结果写进沙箱日志的回调（缺省不记，兼容测试里的旧形状）。 */
+  record?: (entry: { decision: 'allowed' | 'denied' | 'error'; toolName: string; reason: string }) => void;
 }
 
 export interface StepLoadDeps {
@@ -130,8 +132,24 @@ export function assertStepPreset(value: unknown): StepPreset {
 /** 本 GUI 的 confirm。没有窗口、应答失败或非允许，都返回 false，不改写成放行。 */
 export function createGuiStepConfirm(deps: GuiConfirmDeps): StepConfirm {
   return async (title, message, opts) => {
-    if (!deps.hasWindow()) return false;
-    if (opts?.signal?.aborted) return false;
+    const toolName = String(title || '受限操作');
+    const reason = String(message || '');
+    // BUG-053：Agent 路径的批准/拒绝此前一条都不进沙箱日志——留痕调用点全在浏览器面板、
+    // 白名单变更和那条恒被拒的 tool-exec 接缝里，于是「判定可检索」的面板看不到用户批了什么。
+    // 四个出口各记一条；留痕本身失败不许影响判定，所以包在 try 里，返回值语义一字未动。
+    const record = (decision: 'allowed' | 'denied' | 'error', why: string): void => {
+      try {
+        deps.record?.({ decision, toolName, reason: why });
+      } catch { /* 记不上也不能改判定 */ }
+    };
+    if (!deps.hasWindow()) {
+      record('denied', '渲染层未就绪，确认请求无法送达（零等待拒绝）');
+      return false;
+    }
+    if (opts?.signal?.aborted) {
+      record('denied', '回合已中止，确认未应答');
+      return false;
+    }
     const id = deps.nextId();
     try {
       deps.send(GUI_CONFIRM_CHANNEL, {
@@ -140,8 +158,11 @@ export function createGuiStepConfirm(deps: GuiConfirmDeps): StepConfirm {
         reason: String(message || ''),
       });
       const outcome = await deps.wait(id, opts?.signal);
-      return outcome === 'allowed-once';
-    } catch {
+      const allowed = outcome === 'allowed-once';
+      record(allowed ? 'allowed' : 'denied', allowed ? '用户在弹窗内批准：' + String(outcome) : '用户未批准（应答=' + String(outcome) + '）');
+      return allowed;
+    } catch (err) {
+      record('error', '确认链路异常，按 fail-closed 拒绝：' + ((err as Error).message || String(err)));
       return false;
     }
   };

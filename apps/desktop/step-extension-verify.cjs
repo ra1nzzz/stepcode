@@ -59,7 +59,29 @@ function spyLoad() {
 const illegal = ['ask', 'read-only', 'default', 'full-trust', 'bypassPermissions', 'auto', 'strict', '', null];
 
 async function main() {
-  await check('非法权限值不会进入 createStepExtensionInline', async () => {
+    // BUG-053：GUI 确认的四个出口都必须留痕，且留痕不改判定语义。
+  await check('GUI 确认的批准/拒绝/无窗口/异常四种出口各留一条沙箱痕迹', async () => {
+    const rec = [];
+    const base = { hasWindow: () => true, send: () => {}, nextId: () => 'a1', record: (e) => rec.push(e) };
+    const ok = seam.createGuiStepConfirm({ ...base, wait: async () => 'allowed-once' });
+    const no = seam.createGuiStepConfirm({ ...base, wait: async () => 'denied' });
+    const nowin = seam.createGuiStepConfirm({ ...base, hasWindow: () => false, wait: async () => 'allowed-once' });
+    const boom = seam.createGuiStepConfirm({ ...base, wait: async () => { throw new Error('应答超时'); } });
+    assert.strictEqual(await ok('file_write', '写 a.txt'), true, '批准应放行');
+    assert.strictEqual(await no('file_write', '写 b.txt'), false, '未批准应拒绝');
+    assert.strictEqual(await nowin('shell_command', 'ls'), false, '无窗口应零等待拒绝');
+    assert.strictEqual(await boom('file_write', '写 c.txt'), false, '异常应 fail-closed');
+    assert.strictEqual(rec.length, 4, '四次判定应有四条留痕，实际 ' + rec.length);
+    assert.deepStrictEqual(rec.map((r) => r.decision), ['allowed', 'denied', 'denied', 'error'],
+      '留痕的判定形态不符：' + JSON.stringify(rec.map((r) => r.decision)));
+    assert.strictEqual(rec[0].toolName, 'file_write', '留痕要带上被确认的工具名');
+    assert.ok(rec[3].reason.includes('应答超时'), '异常出口要如实记下原因：' + rec[3].reason);
+    // 没有 record 依赖时（旧形状）判定本身照常工作，不抛错。
+    const bare = seam.createGuiStepConfirm({ hasWindow: () => true, send: () => {}, nextId: () => 'b1', wait: async () => 'allowed-once' });
+    assert.strictEqual(await bare('file_write', 'x'), true, '缺 record 回调不该影响判定');
+  });
+
+await check('非法权限值不会进入 createStepExtensionInline', async () => {
     const load = spyLoad();
     for (const preset of illegal) {
       await assert.rejects(
