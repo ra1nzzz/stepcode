@@ -411,6 +411,18 @@ function makeFakeChild() {
     assert.ok(typeof r.session.id === 'string' && r.session.id.length > 0);
     assert.ok(typeof r.session.pid === 'number');
     global.__t1 = r.session.id;
+
+    // BUG-067：PTY 创建要在沙箱日志里留下可追溯条目（读真正落盘的文件，不读内存对象）。
+    const sb = require('./dist/ipc-sandbox.js');
+    sb.flushSandboxLog();
+    const sbFile = sb.sandboxLogFile();
+    const entries = JSON.parse(fs.readFileSync(sbFile, 'utf-8'));
+    const mine = entries.filter((x) => x && x.tool === 'terminal.create');
+    assert.ok(mine.length >= 1, '沙箱日志里应有一条 terminal.create，文件=' + sbFile + '，实际条数=' + mine.length);
+    const last = mine[mine.length - 1];
+    assert.strictEqual(last.kind, 'command', 'PTY 留痕该归到 command 这一类，实际 ' + last.kind);
+    assert.strictEqual(last.decision, 'allowed', '创建成功的留痕应是 allowed，实际 ' + last.decision);
+    assert.ok(typeof last.target === 'string' && last.target.length > 2, 'target 必须是生效的工作目录，实际 ' + last.target);
   });
 
   await check('terminal-status：会话与回放缓冲可见', async () => {
