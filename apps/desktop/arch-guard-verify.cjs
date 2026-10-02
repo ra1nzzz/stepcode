@@ -579,6 +579,51 @@ function scanRule(rule, code, fileName) {
     }
   });
 
+  // ---------------- R25：沙箱日志的 kind 三处口径必须一致且都有生产者 ----------------
+
+  await check('R25 SandboxKind 联合、UI 筛选项、UI 标签表与生产者四处不得互相漂移', () => {
+    // 第十轮删掉补偿门后，`outbound` 成了没有生产者的枚举值，而 UI 仍提供该筛选项；
+    // 同一次改动里筛选项还漏掉了 `browser`（它有 11 处生产者）。两边都是「UI 声称存在的
+    // 东西，主进程已经不产生 / 从来没产生」那一类，机器可判，所以不该靠人记。
+    const unionSrc = stripComments(read(path.join(APP_DIR, 'sandbox-log.ts')));
+    const m = unionSrc.match(/export type SandboxKind = ([^;]+);/);
+    assert(m, '读不到 SandboxKind 联合定义（改名了就要同步这条规则）');
+    const kinds = m[1].split('|').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean);
+    assert(kinds.length >= 5, `SandboxKind 解析异常，只拿到 ${JSON.stringify(kinds)}`);
+
+    // 这两处解析走**原文**：stripComments 会吃掉模板串里的内容，锚点 `<option` 就没了
+    // （实测：剥注释后匹配不到，报「读不到」）。注释里也不会真有 `<option` 模板，走原文安全。
+    const appSrc = read(path.join(APP_DIR, 'renderer', 'app.js'));
+    // 标签表
+    const labels = appSrc.match(/const SL_KIND_LABELS = \{([^}]+)\}/);
+    assert(labels, '读不到 SL_KIND_LABELS');
+    const labelKeys = [...labels[1].matchAll(/([A-Za-z_]+)\s*:/g)].map((x) => x[1]);
+    // 筛选项：锚在 `<option` 模板上。文件里还有别的 `['all', …].map(`（决策筛选那一路），
+    // 不锚死就会解析到错的数组，规则于是开始报「读不到」或报莫须有的漂移。
+    const opts = appSrc.match(/\[\s*'all'([^\]]*)\]\s*\.map\(\(k\)\s*=>\s*`<option/);
+    assert(opts, '读不到沙箱日志的 kind 筛选项列表（写法变了就要同步这条规则的解析）');
+    const optKeys = [...opts[1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]);
+
+    const missing = (where, list) => kinds.filter((k) => !list.includes(k))
+      .length === 0 ? null : `${where} 少了 ${kinds.filter((k) => !list.includes(k)).join(', ')}`;
+    const extra = (where, list) => list.filter((k) => k !== 'all' && !kinds.includes(k))
+      .length === 0 ? null : `${where} 多出 ${list.filter((k) => k !== 'all' && !kinds.includes(k)).join(', ')}`;
+    for (const problem of [missing('SL_KIND_LABELS', labelKeys), extra('SL_KIND_LABELS', labelKeys),
+      missing('筛选项', optKeys), extra('筛选项', optKeys)]) {
+      assert(!problem, problem);
+    }
+
+    // 生产者：每个 kind 至少要在主进程源码里以字面量出现过一次（动态传参另计，不豁免联合）。
+    const producers = {};
+    for (const abs of desktopTsFiles()) {
+      const src = stripComments(read(abs));
+      for (const mm of src.matchAll(/kind:\s*'([a-z_]+)'/g)) producers[mm[1]] = (producers[mm[1]] || 0) + 1;
+    }
+    const dead = kinds.filter((k) => !producers[k]);
+    assert(dead.length === 0,
+      `以下 SandboxKind 没有任何生产者，UI 却提供该筛选项（等于宣称一道不存在的门）：${dead.join(', ')}`);
+  });
+
   /* ---------------- R12：数据目录单源（M3）——禁止 env 直读复辟 ---------------- */
 
   await check('R12 数据目录单源：除 data-dir.ts 与 main.ts 赋值点外禁止直读 ORCHDESK_DATA_DIR', () => {

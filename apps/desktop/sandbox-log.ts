@@ -23,7 +23,7 @@ export type SandboxDecision = 'allowed' | 'denied' | 'error';
  * 沙箱判定类型（比工具名更粗的维度，便于按类检索）。
  * browser：内置浏览器（CDP）的导航与页面内操作——同样要能回答「Agent 刚刚在哪个网页上点了什么」。
  */
-export type SandboxKind = 'path' | 'command' | 'network' | 'approval' | 'outbound' | 'browser' | 'config';
+export type SandboxKind = 'path' | 'command' | 'network' | 'approval' | 'browser' | 'config';
 
 export interface SandboxLogEntry {
   id: string;
@@ -48,7 +48,7 @@ export const SANDBOX_FILE_NAME = 'sandbox-log.json';
 /** 环形缓冲上限：超出后淘汰最旧条目。 */
 export const SANDBOX_LOG_MAX = 500;
 
-const KINDS: SandboxKind[] = ['path', 'command', 'network', 'approval', 'outbound', 'browser', 'config'];
+const KINDS: SandboxKind[] = ['path', 'command', 'network', 'approval', 'browser', 'config'];
 const DECISIONS: SandboxDecision[] = ['allowed', 'denied', 'error'];
 
 export function isSandboxKind(v: unknown): v is SandboxKind {

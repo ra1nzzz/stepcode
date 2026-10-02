@@ -250,7 +250,7 @@
   /* ---------- PRD FR-8 沙箱日志：判定结果与类型的中文名 ---------- */
   const SL_DECISION_LABELS = { all: '全部结果', allowed: '放行', denied: '拒绝', error: '出错' };
   // browser（ADR-0011）：内置浏览器的导航与页面内操作
-  const SL_KIND_LABELS = { all: '全部类型', path: '路径', command: '命令', network: '网络', approval: '授权', outbound: '外发', browser: '浏览器', config: '配置' };
+  const SL_KIND_LABELS = { all: '全部类型', path: '路径', command: '命令', network: '网络', approval: '授权', browser: '浏览器', config: '配置' };
 
   /* ---------- 状态 ---------- */
   const state = {
@@ -2267,7 +2267,7 @@
               ${['all', 'denied', 'allowed', 'error'].map((d) => `<option value="${d}"${state.sandboxLog.decision === d ? ' selected' : ''}>${SL_DECISION_LABELS[d]}</option>`).join('')}
             </select>
             <select id="sblog-kind" class="inp" style="width:110px">
-              ${['all', 'path', 'command', 'network', 'approval', 'outbound', 'config'].map((k) => `<option value="${k}"${state.sandboxLog.kind === k ? ' selected' : ''}>${SL_KIND_LABELS[k]}</option>`).join('')}
+              ${['all', 'path', 'command', 'network', 'approval', 'browser', 'config'].map((k) => `<option value="${k}"${state.sandboxLog.kind === k ? ' selected' : ''}>${SL_KIND_LABELS[k]}</option>`).join('')}
             </select>
             <button class="btn sm" data-action="sblog-clear" ${state.sandboxLog.total ? '' : 'disabled'}>清空</button>
           </div>
