@@ -454,7 +454,9 @@
     }
     const p = PLUGINS.find((x) => x.id === id);
     if (!p) return '';
-    if (p.on) return '<span class="badge ok">已启用</span>';
+    // 运行时不可用（`orchdesk:plugin-runtime` 在 dsh 卸下后回 ready:false）时，不许回落到常量说「已启用」。
+    // 那等于用一份写死的常量向用户宣称主进程已经不提供的能力。回落一律标未接入。
+    return '<span class="badge">未接入</span>';
     return p.deferred ? '<span class="badge">延后 · 需联调</span>' : '<span class="badge">已关闭</span>';
   }
 
@@ -1887,7 +1889,7 @@
           </div>
         </div>
         <div class="sec-title">当前激活</div>
-        <div class="faint" style="font-size:12px">意图识别 · TRACE · 脑-手解耦 · 多Agent编排 · 补偿层 · 自进化</div>
+        <div class="faint" style="font-size:12px">运行时未接入 · Cordis 插件已随 dsh 卸下（见 SPEC 删除清单）</div>
         <div class="sec-title">OrchClaw Hub 联调</div>
         <div class="card" style="padding:10px">
           <div class="faint" style="margin-bottom:8px">配对远程 Agent（凭据经系统安全存储加密）；主会话可向其下发任务并回收结果。端到端需可达远程 Hub。</div>

@@ -808,7 +808,20 @@ ipcMain.handle('orchdesk:app-version', async () => {
 // ---- FR-5 模型管理桥接 ----
 ipcMain.handle('orchdesk:models-get', async () => {
   const cfg = loadModelConfig();
-  return { providers: cfg.providers.map(p => ({ id: p.id, name: p.name, type: p.type, baseUrl: p.baseUrl, models: p.models })), defaultProvider: cfg.defaultProvider, defaultModel: cfg.defaultModel, maxToolIterations: cfg.maxToolIterations };
+  // 字段必须与 `orchdesk:models-save` 写进去的对齐。原先只回 id/name/type/baseUrl/models，
+  // 而设置页编辑回填读 `p.apiMode || 'chat'`、`p.presetId`，保存又写回这两个字段：
+  // 重启后编辑一个 responses 模式的提供商（哪怕只换 key），保存就被静默降级成 chat
+  // 并丢掉预设，回合随即报协议/模型错。读写不对称在这条路上是数据丢失，不是显示问题。
+  return {
+    providers: cfg.providers.map((p) => {
+      const extra = p as unknown as { apiMode?: string; presetId?: string };
+      return {
+        id: p.id, name: p.name, type: p.type, baseUrl: p.baseUrl, models: p.models,
+        apiMode: extra.apiMode, presetId: extra.presetId,
+      };
+    }),
+    defaultProvider: cfg.defaultProvider, defaultModel: cfg.defaultModel, maxToolIterations: cfg.maxToolIterations,
+  };
 });
 
 ipcMain.handle('orchdesk:models-save', async (_e, config: unknown) => {

@@ -101,10 +101,16 @@ function installPluginsActions(ACTIONS, ctx) {
   async function act_tp_dispose(el, id, e) {
  {
         try {
-          const ok = await ctx.bridge.disposeTempPlugin(id);
-          if (ok) ctx.state.tempPlugins = ctx.state.tempPlugins.filter((p) => p.id !== id);
+          // 返回值是对象（preload 声明 Promise<{ok:boolean;reason?}>），对象恒真：
+          // 原先 `if (ok)` 等于永远为真，且 toast 在 if 之外，失败也报「已卸载」。
+          const r = await ctx.bridge.disposeTempPlugin(id);
+          if (!r || r.ok !== true) {
+            ctx.toast(`临时插件未卸载：${(r && r.reason) || '主进程未接入'}`, 'err');
+            return;
+          }
+          ctx.state.tempPlugins = ctx.state.tempPlugins.filter((p) => p.id !== id);
           ctx.render(); ctx.toast('临时插件已卸载', 'warn');
-        } catch { ctx.toast('卸载失败（运行时未接入）', 'warn'); }}
+        } catch (err) { ctx.toast(`卸载失败：${(err && err.message) || err}`, 'err'); }}
   
   }
 

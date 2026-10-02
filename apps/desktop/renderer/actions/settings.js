@@ -171,10 +171,17 @@ function installSettingsActions(ACTIONS, ctx) {
         const t = (ctx.$('#compText')?.value || '').trim();
         if (!t) { ctx.toast('请描述操作', 'warn'); return; }
         try {
+          // 不看 ok 就等于把主进程的拒绝当成功写进审计：补偿层已按 SPEC 删除清单卸下，
+          // ipc-plugins 的 compensate 恒回 {ok:false, unavailable:true}，而 toast 原本
+          // 无条件说「已记录并入审计」，catch 只接抛错、接不到这个返回值。
           const rec = await ctx.bridge.compensate(t);
+          if (!rec || rec.ok !== true) {
+            ctx.toast(`补偿未记录：${(rec && rec.reason) || '主进程未接入'}`, 'err');
+            return;
+          }
           ctx.state.compAudit.unshift(rec);
           ctx.closeModal(); ctx.render(); ctx.toast('补偿动作已记录并入审计', 'ok');
-        } catch { ctx.toast('记录失败（运行时未接入）', 'warn'); }
+        } catch (err) { ctx.toast(`记录失败：${(err && err.message) || err}`, 'err'); }
         return;
       }
 
