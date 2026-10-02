@@ -418,6 +418,34 @@ function hostFor(confirm, cwd, onDelta, onToolRun) {
     assert.equal(sb.agentExecAudit('bash', { command: 'ls' }, false).kind, 'command');
   });
 
+  // BUG-064：原子替换只在「自己抛错」时清 tmp；进程被杀就留下 auth.json.<pid>.tmp，
+  // 里面是**明文凭据**，而快照/备份整目录复制会把它一起带走。所以写入路径每次都要扫残留。
+  await check('崩溃留下的 auth.json.<pid>.tmp 会被扫掉，正式文件与别的文件不受影响', async () => {
+    const rt = await startFakeProvider();
+    try {
+      await t5.runStepSessionTurn('s-sweep', '先跑一轮把 gui 目录建出来', hostFor(async () => false, rt.cwd));
+      fs.mkdirSync(rt.guiDir(), { recursive: true });
+      const stale = path.join(rt.guiDir(), 'auth.json.99999.tmp');
+      fs.writeFileSync(stale, '{"leak":"sk-PLAINTEXT-IN-TMP"}', 'utf-8');
+      const decoy = path.join(rt.guiDir(), 'keepme.txt');
+      fs.writeFileSync(decoy, 'keep', 'utf-8');
+
+      // 换一条会话并清缓存，确保第二次真的走一遍写入路径（内容没变也必须扫，
+      // 所以扫描不能只挂在「内容有变化」那个分支里）。
+      t5.resetStepSessionCache();
+      await t5.runStepSessionTurn('s-sweep2', '再跑一轮', hostFor(async () => false, rt.cwd));
+
+      assert.equal(fs.existsSync(stale), false, '残留的明文凭据 tmp 必须被清掉');
+      assert.equal(fs.existsSync(decoy), true, '扫描不该碰别的文件');
+      assert.equal(fs.existsSync(path.join(rt.guiDir(), 'auth.json')), true, '正式 auth.json 不能被误删');
+      const leftovers = fs.readdirSync(rt.guiDir()).filter((f) => /\.tmp$/.test(f));
+      assert.deepEqual(leftovers, [], 'gui/ 目录里不该留下任何 .tmp，实际：' + leftovers.join(', '));
+    } finally {
+      t5.resetStepSessionCache();
+      rt.close();
+    }
+  });
+
   await check('GUI 模型配置经桥接落到 Step 存储根，且不动 CLI 自己的凭据', async () => {
     const rt = await startFakeProvider();
     try {

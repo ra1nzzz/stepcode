@@ -275,6 +275,7 @@ async function writeGuiModelRuntime(locked: LockedModule, cfg: GuiModelConfig): 
   const authPath = path.join(dir, 'auth.json');
   const models = JSON.stringify(toStepModelsJson(cfg), null, 2);
   const auth = JSON.stringify(toStepAuthJson(cfg), null, 2);
+  sweepStaleTempFiles(dir);
   // 内容没变就不落盘：避免每次发送都重写凭据文件（也是给安全审计留干净的时间戳）。
   if (readIfExists(modelsPath) !== models || readIfExists(authPath) !== auth) {
     fs.mkdirSync(dir, { recursive: true });
@@ -285,6 +286,26 @@ async function writeGuiModelRuntime(locked: LockedModule, cfg: GuiModelConfig): 
     atomicWrite(authPath, auth);
   }
   return locked.ModelRuntime.create({ authPath, modelsPath });
+}
+
+/**
+ * 扫掉上一崩溃/断电留下的原子替换临时文件。
+ * 为什么要专门扫：`atomicWrite` 只在**自己抛错时**清理 tmp，进程被杀就留下
+ * `auth.json.<pid>.tmp`——那里面是**明文凭据**，会长期躺在 gui/ 目录里，
+ * 而快照与备份是整个目录复制的，等于把明文 key 多带一份走。
+ * 目录还不存在（首次运行）时静默跳过；单个文件删不掉也不阻断本次写入。
+ */
+function sweepStaleTempFiles(dir: string): void {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return; // 目录还不存在
+  }
+  for (const name of entries) {
+    if (!/^(?:models|auth)\.json\.\d+\.tmp$/.test(name)) continue;
+    try { fs.rmSync(path.join(dir, name), { force: true }); } catch { /* 删不掉留给下次 */ }
+  }
 }
 
 /** 同目录临时文件 + rename：崩溃/断电不留半个文件。 */
