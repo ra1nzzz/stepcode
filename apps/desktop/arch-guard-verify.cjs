@@ -557,8 +557,6 @@ function scanRule(rule, code, fileName) {
     // 豁免必须带理由；新增豁免要连同缺陷条目一起写。
     const UNWIRED = {
       'event-emit.ts': 'BUG-035：canonical 事件发射与 SSE/WS 消费者整簇未接线（CHANGELOG 的 phase8 遗留，主进程不引用、docs 不声称）',
-      'event-emit-verify.ts': 'BUG-035：上面那簇的 .ts 版测试，不在 verify 链上；与 event-emit-verify.cjs 同名的它按 node 直跑必失败',
-      'event-emit-quick-verify.ts': 'BUG-035：同上，快速版探针',
       'preload.ts': '由 webPreferences.preload 以路径字符串引用，不是静态 import，可达性扫不到（属真在用）',
     };
     const orphans = allTs.filter((f) => !reachable.has(f) && !loaded.has(f))
