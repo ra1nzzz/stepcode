@@ -785,6 +785,35 @@ function scanRule(rule, code, fileName) {
     }
   });
 
+  /* ---------------- R31：每只 BrowserWindow 都必须显式拒绝 window.open ----------------
+   * BUG-059 带出的口径：内置浏览器那只窗口装的是任意外部网页，是三处创建点里最不受信任的，
+   * 却曾是唯一没上弹窗门的——页面里 window.open('http://169.254.169.254/…') 开出的新
+   * webContents 不挂在 guardNavigation 上、又共用 session，isBlockedHost 那条 SSRF 门整个被绕过。
+   * 实现是**按文件计数**（窗口数 ≤ handler 数），够用且不会误伤：一处窗口配一处 handler 是当前形态。
+   * 已知局限：同文件里窗口与 handler 的配对关系没验证，只保证数量不缺——
+   * 真要把 handler 挂错窗口，仍需人来看，这里如实写下而不是假装它测到了。
+   */
+  await check('R31 新建 BrowserWindow 必须配套拒绝 window.open', () => {
+    const WINDOW_RE = /new BrowserWindow\(/g;
+    const HANDLER_RE = /setWindowOpenHandler\s*\(/g;
+    const findings = [];
+    let sites = 0;
+    for (const abs of desktopTsFiles()) {
+      const rel = path.relative(APP_DIR, abs).replace(/\\/g, '/');
+      const src = stripComments(read(abs));
+      const wins = (src.match(WINDOW_RE) || []).length;
+      if (!wins) continue;
+      sites += wins;
+      const handlers = (src.match(HANDLER_RE) || []).length;
+      if (handlers < wins) findings.push(`${rel}: ${wins} 处 new BrowserWindow 只见到 ${handlers} 处 setWindowOpenHandler`);
+    }
+    assert(sites >= 3, 'R31 扫描面塌了：只找到 ' + sites + ' 处窗口创建点（本仓应有 3 处）');
+    const probe = 'const w = new BrowserWindow({});';
+    assert((probe.match(WINDOW_RE) || []).length === 1, 'R31 正控 1 失配：窗口创建点没被识别');
+    assert((probe.match(HANDLER_RE) || []).length === 0, 'R31 正控 2 失配：探针里本不该有 handler');
+    assert(findings.length === 0, '有窗口没上弹窗门（弹窗可绕过宿主守卫并共享 session）：\n  ' + findings.join('\n  '));
+  });
+
   /* ---------------- R12：数据目录单源（M3）——禁止 env 直读复辟 ---------------- */
 
   await check('R12 数据目录单源：除 data-dir.ts 与 main.ts 赋值点外禁止直读 ORCHDESK_DATA_DIR', () => {

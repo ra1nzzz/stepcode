@@ -239,6 +239,13 @@ function ensureWindow(): BrowserWindow {
     if (win === w) { win = null; attached = false; }
     emit();
   });
+  // BUG-059：这只窗口装的是任意外部网页，是三处 BrowserWindow 里最不受信任的一只，
+  // 却曾漏了弹窗门。`guardNavigation` 只挂在 `win` 自己的 webContents 上——
+  // 页面里 `window.open('http://169.254.169.254/…')` 开出的新 webContents 既不过这道主机门，
+  // 又共用同一份 session（能带着已登录站点的 cookie），下面那条 isBlockedHost 全绕过。
+  // 主窗与悬浮窗都是 setWindowOpenHandler deny（`boot-desktop.ts:116`、`boot-desktop.ts:280`），
+  // 这一处对齐同一口径；R31 现在钉住「每个 new BrowserWindow 都必须显式拒绝 window.open」。
+  w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // 重定向与页内跳转要过同一道主机门。`ipc-browser.ts:69` 只挡初始 URL：
   // 一个公网地址 302 到 `http://169.254.169.254/` 就绕过了一切，页面正文还能经
   // browser_text / 截图取回来。`tool-exec.ts` 的 web_fetch 每一跳都复检，这里对齐。
