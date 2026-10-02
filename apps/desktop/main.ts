@@ -552,7 +552,6 @@ initMarket({ dataDir });
 // 其余 UI 方法是主进程里的空操作——本 GUI 的界面就是渲染层，主进程不另画一套。
 const stepSessionHost: StepSessionHost = {
   composed: () => currentStepExtension() ?? undefined,
-  preset: () => currentStepExtension()?.preset ?? 'bypass',
   // 必须把 sessionId 透出去：tool-exec 的 sessionCwd 不带 id 时永远返回全局
   // 默认目录，用户在侧栏会话上绑定的项目目录会被静默忽略。
   sessionCwd: (sessionId?: string) => sessionCwd(sessionId),

@@ -20,7 +20,7 @@ import { pathToFileURL } from 'node:url';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { resolveStepCheckout, type ComposedStepExtension, type StepPreset } from './step-extension';
+import { resolveStepCheckout, type ComposedStepExtension } from './step-extension';
 import {
   configFingerprint,
   pickDefaultModel,
@@ -112,8 +112,6 @@ export type StepSessionHost = {
    * 本模块取——调用方解包到哪一层是历史歧义的来源。
    */
   composed: () => ComposedStepExtension | undefined;
-  /** 当前预设。权限值只有 bypass / autopilot。 */
-  preset: () => StepPreset;
   /**
    * 会话工作目录。必须收 sessionId：GUI 的每条侧栏会话可以各自绑定项目目录
    * （orchdesk:set-session-cwd → setSessionCwd），收了才会按目录取，不收就
