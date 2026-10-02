@@ -966,8 +966,12 @@
     // FR-5：单回合 token 徽标（网关没上报 usage 的回合没有该字段，不显示假 0）
     const tok = (m.tok && Number.isFinite(m.tok.p) && Number.isFinite(m.tok.c))
       ? `<span class="faint mono" style="font-size:11px;margin-left:6px">↑${fmtTokens(m.tok.p)} ↓${fmtTokens(m.tok.c)}</span>` : '';
-    const fb = (m.feedback && state.feedback.has(sid + '|' + m.t)) ? `<div class="feedback" style="color:var(--ok)">已记录反馈 · 已脱敏遥测</div>`
-      : (m.feedback ? `<div class="feedback"><span>这条回答对你有帮助吗？</span><button data-action="trace" data-fb="positive" data-t="${m.t}">有帮助</button><button data-action="trace" data-fb="negative" data-t="${m.t}">需改进</button><span class="faint">反馈将用于改善回复质量</span></div>` : '');
+    // BUG-036：这两个按钮在 app.js 里没有任何 data-action="trace" 的分发分支，
+    // 点了不发 bridge.traceFeedback，state.feedback 也只从持久会话记录里回填。
+    // 也就是说它是一个「承诺了用途的死控件」，而 trace 已按 SPEC 删除清单卸下且不迁移，
+    // 主进程 orchdesk:trace-feedback 恒返回 unavailable。
+    // 因此整块反馈控件（含那句不会发生的成功回执文案）一并撤掉；要恢复得先接一个真实落点。
+    const fb = '';
     const raw = m.x || m.text || '';
     let txt;
     if (m.typing) {
@@ -2313,7 +2317,7 @@
           ${desktopItem('autoupdate', '自动更新', '新版本静默下载（退出时安装）')}
           ${desktopItem('floating', '悬浮窗', '桌面常驻小窗，点击唤起主窗')}
           ${desktopItem('notify', '开机提醒', '关键事件系统通知')}
-          <div class="desktop-item"><div><div class="di-name">TRACE 遥测</div><div class="di-desc" id="trace-desc">脱敏遥测上报至 OrchDesk 公开仓库（仅白名单字段，不含任何消息内容）</div></div><div class="switch ${state.traceEnabled ? 'on' : ''}" id="trace-switch" data-action="trace-toggle"></div></div>
+          <div class="desktop-item"><div><div class="di-name">TRACE 遥测</div><div class="di-desc" id="trace-desc">未启用：trace 随 dsh 卸下且不迁移，本壳不向任何仓库上报</div></div><div class="switch ${state.traceEnabled ? 'on' : ''}" id="trace-switch" data-action="trace-toggle"></div></div>
         </div>
         <div class="sec-title" id="settings-section-memory"><span class="ico">${ic('archive', 14)}</span>分层记忆</div>
         <div class="card">
@@ -2617,11 +2621,14 @@
     const sw = $('#trace-switch');
     if (sw) sw.classList.toggle('on', state.traceEnabled);
     const desc = $('#trace-desc');
+    // BUG-036：这一支原文承诺把脱敏字段上报到另一个产品的公开仓库，而 trace 已按 SPEC
+    // 删除清单卸下且不迁移，主进程 orchdesk:trace-* 一律返回不可用。开关打开时这句话
+    // 就会显示给用户：既承诺了一件不发生的事，又把目标指向别的产品的仓库。
     if (desc) desc.textContent = state.traceBuiltin
       ? (state.traceEnabled
-        ? '脱敏遥测上报至 OrchDesk 公开仓库（仅白名单字段，不含任何消息内容）'
-        : '已关闭（重启后完全生效）——遥测仅本地缓冲，不上传')
-      : '未内置上报凭据（开发模式）——遥测仅本地缓冲，不上传';
+        ? '已勾选，但上报未启用：trace 随 dsh 卸下且不迁移，本壳不向任何仓库上报'
+        : '已关闭——本壳不上传遥测，反馈也不落任何远端')
+      : '未启用：trace 随 dsh 卸下且不迁移，本壳不向任何仓库上报';
   }
 
   function toast(msg, type = '') {

@@ -624,6 +624,31 @@ function scanRule(rule, code, fileName) {
       `以下 SandboxKind 没有任何生产者，UI 却提供该筛选项（等于宣称一道不存在的门）：${dead.join(', ')}`);
   });
 
+  // ---------------- R26：渲染层不得再宣称已卸下的上报与反馈遥测 ----------------
+
+  await check('R26 渲染层不承诺 trace 上报或"已脱敏遥测"（SPEC 删除清单）', () => {
+    // trace 在 SPEC 的删除清单上是「删除。不迁」，主进程 orchdesk:trace-* 恒返回不可用。
+    // 界面却一度写着「脱敏遥测上报至 OrchDesk 公开仓库」，并把反馈点按「已记录反馈 ·
+    // 已脱敏遥测」——而 data-action="trace" 根本没有分发分支，点了不发任何东西。
+    // 这类「UI 宣称主进程不提供的行为」的缺陷机器可判，所以不许靠人记住。
+    const forbidden = [
+      /上报至\s*OrchDesk/,
+      /已脱敏遥测/,
+      /反馈将用于改善回复质量/,
+    ];
+    // 正控：坏文案必须被抓到。
+    assert(forbidden.some((re) => re.test('脱敏遥测上报至 OrchDesk 公开仓库（仅白名单字段）')), 'R26 正控 1 失配');
+    assert(forbidden.some((re) => re.test('已记录反馈 · 已脱敏遥测')), 'R26 正控 2 失配');
+    const hits = [];
+    for (const f of rendererFiles()) {
+      const src = read(f.abs);
+      src.split(/\r?\n/).forEach((line, i) => {
+        if (forbidden.some((re) => re.test(line))) hits.push(`${f.name}:${i + 1}  ${line.trim().slice(0, 90)}`);
+      });
+    }
+    assert(hits.length === 0, `界面在宣称主进程不提供的行为：\n${hits.join('\n')}`);
+  });
+
   /* ---------------- R12：数据目录单源（M3）——禁止 env 直读复辟 ---------------- */
 
   await check('R12 数据目录单源：除 data-dir.ts 与 main.ts 赋值点外禁止直读 ORCHDESK_DATA_DIR', () => {
