@@ -303,14 +303,16 @@ function runExpr(expr, dom, extra = {}) {
   // -------------------------------------------------------------------------
   console.log('== A4. 工具表合并（模型侧只有一张清单） ==');
 
-  await check('8 个浏览器工具并入 TOOL_DEFS，提示词全部覆盖', () => {
+  // BUG-061 之后：提示词由锁定点 Step 运行时生成，本壳那个 buildSystemPrompt 是零调用方的残留、已删除
+  // （arch-guard R34 现在既不许生产代码引用它，也不许定义复辟）。所以这里只验仍然成立的那半件事：
+  // 8 个浏览器工具确实并进了本壳的 TOOL_DEFS。工具名清单从 TOOL_DEFS 现算，不再依赖被删的 TOOL_NAMES。
+  await check('8 个浏览器工具并入 TOOL_DEFS', () => {
     assert.strictEqual(bt.BROWSER_TOOL_DEFS.length, 8);
+    const names = rt.TOOL_DEFS.map((t) => t.function.name);
     for (const t of bt.BROWSER_TOOL_DEFS) {
-      assert.ok(rt.TOOL_NAMES.includes(t.function.name), `TOOL_DEFS 缺少 ${t.function.name}`);
+      assert.ok(names.includes(t.function.name), 'TOOL_DEFS 缺少 ' + t.function.name);
     }
-    const p = rt.buildSystemPrompt();
-    for (const n of bt.BROWSER_TOOL_NAMES) assert.ok(p.includes(n), `提示词缺少 ${n}`);
-    assert.ok(p.includes('browser_open'), '提示词应给出浏览器工具使用顺序');
+    assert.ok(names.includes('browser_open'), 'browser_open 必须在统一工具表里');
   });
 
   await check('写操作集合 = click / type / eval（这三个会真实改变页面）', () => {
