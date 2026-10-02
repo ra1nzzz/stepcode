@@ -66,7 +66,7 @@ import {
   DEFAULT_MODEL,
 
 } from './agent-runtime';
-import { isAbsoluteLike } from './common-tools';
+import { isAbsoluteLike, isProviderBaseUrlAllowed } from './common-tools';
 import { callModel as callModelHttp, initModelClient } from './model-client';
 import { initModelCatalog, refreshCatalogInBackground, getCatalogPresets, listAvailableModels } from './model-catalog';
 import { abortStepSession, hasActiveStepTurn, resetStepSessionCache, runStepSessionTurn, type StepSessionHost, type StepUiContext } from './step-session';
@@ -858,6 +858,14 @@ ipcMain.handle('orchdesk:models-save', async (_e, config: unknown) => {
       // 放行但可见：存量重复仍会让投影端与读取端判给不同提供商，要让用户知道它存在。
       log('WARN', 'models', `保存放行存量重复的提供商 id：${[...incomingDup].join('、')}（投影时后写胜出，请逐个改成可区分的名字）`);
     }
+    // BUG-054：baseUrl 决定解密后的 key 发往哪里。放在 id 等形状校验**之后**——
+    // 那些是更基础的入参问题，先报它们才不会让一条坏 URL 抢掉更准确的错误。
+    for (const p of incoming.providers as unknown as Array<Record<string, unknown>>) {
+      const gate = isProviderBaseUrlAllowed(p.baseUrl);
+      if (!gate.ok) {
+        return { ok: false, reason: `提供商「${String(p.name ?? p.id ?? '?')}」的 baseUrl 被拒绝：${gate.reason}` };
+      }
+    }
     // 无加密后端时 encryptKey 拒绝写明文并返回 ''。原实现照样回 {ok:true}，
     // 于是 key 被丢掉而 UI 显示「保存成功」。宁可保存失败并说明原因。
     const droppedKey: string[] = [];
@@ -1307,7 +1315,16 @@ ipcMain.handle('orchdesk:import-data', async () => {
       imported.sessions = sessOutcome.added;
     }
     const modelsFile = path.join(root, DATA_FILE_NAMES.models);
-    const modelOutcome = mergeProvidersData(readJsonFile(modelsFile), bundle.models);
+    // BUG-054：备份里的提供商同样不能带着明文 http 进来。合并前逐条校验 baseUrl，
+    // 不合格的直接丢掉并如实记 notes（与凭据段「结构无效已跳过」同一口径）。
+    const bundleModels = (bundle.models && typeof bundle.models === 'object'
+      ? bundle.models : {}) as Record<string, unknown>;
+    const rawProviders = Array.isArray(bundleModels.providers)
+      ? (bundleModels.providers as Array<Record<string, unknown>>)
+      : [];
+    const goodProviders = rawProviders.filter((p) => !!p && typeof p === 'object' && isProviderBaseUrlAllowed(p.baseUrl).ok);
+    const droppedProviders = rawProviders.length - goodProviders.length;
+    const modelOutcome = mergeProvidersData(readJsonFile(modelsFile), { ...bundleModels, providers: goodProviders });
     if (modelOutcome && modelOutcome.changed) {
       fs.writeFileSync(modelsFile, JSON.stringify(modelOutcome.data), 'utf-8');
       imported.providers = modelOutcome.added;
@@ -1329,6 +1346,7 @@ ipcMain.handle('orchdesk:import-data', async () => {
 
     // 凭据类：copy-if-absent + 结构校验（伪造备份不得写入明文凭据）
     const notes: string[] = [];
+    if (droppedProviders > 0) notes.push(`备份中有 ${droppedProviders} 个提供商因 baseUrl 不合格（明文 http 非回环 / 无法解析）被跳过`);
     for (const [key, fileName] of [['guanji', DATA_FILE_NAMES.guanji], ['hub', DATA_FILE_NAMES.hub]] as const) {
       const section = bundle[key];
       if (section === null || section === undefined) continue; // R4-6：禁 == null

@@ -113,7 +113,7 @@ const cred = require('./dist/credentials.js');
     (async () => {
       const cid = require('${path.join(__dirname, 'dist', 'credentials.js').replace(/\\/g, '\\\\')}');
       await ipc.get('orchdesk:models-save')(null, {
-        providers: [{ id: 'p1', name: '测试', type: 'openai-compatible', baseUrl: 'http://x/v1', apiKey: 'sk-real-secret', models: ['m'] }],
+        providers: [{ id: 'p1', name: '测试', type: 'openai-compatible', baseUrl: 'https://x/v1', apiKey: 'sk-real-secret', models: ['m'] }],
         defaultProvider: 'p1', defaultModel: 'm', maxToolIterations: 10,
       });
       const raw = JSON.parse(fs.readFileSync(path.join(HOME, 'models.json'), 'utf-8'));
@@ -181,7 +181,7 @@ const cred = require('./dist/credentials.js');
     (async () => {
       const FILE = path.join(HOME, 'models.json');
       const save = (cfg) => ipc.get('orchdesk:models-save')(null, cfg);
-      const prov = (id, name) => ({ id, name, type: 'openai-compatible', baseUrl: 'http://' + id + '/v1', models: ['m-' + id] });
+      const prov = (id, name) => ({ id, name, type: 'openai-compatible', baseUrl: 'https://' + id + '/v1', models: ['m-' + id] });
       const read = () => { try { return JSON.parse(fs.readFileSync(FILE, 'utf-8')); } catch { return null; } };
       const out = {};
 
@@ -205,6 +205,14 @@ const cred = require('./dist/credentials.js');
       fs.writeFileSync(FILE, JSON.stringify({ providers: [prov('a', 'A')] }), 'utf-8');
       out.recovered = await save({ providers: [prov('a', 'A'), prov('b', 'B')] });
       out.recoveredCount = (read()?.providers || []).length;
+      // BUG-054：公网 http 必须被拒且不动磁盘；回环与私网 http 必须放行（不能误伤本机 Ollama / NAS）。
+      const before54 = fs.readFileSync(FILE, 'utf-8');
+      const provUrl = (id, name, url) => ({ id, name, type: 'openai-compatible', baseUrl: url, models: ['m-' + id] });
+      out.pubHttp = await save({ providers: [provUrl('p1', '公网明文', 'http://pub.example.com/v1')] });
+      out.pubHttpUnchanged = fs.readFileSync(FILE, 'utf-8') === before54;
+      out.loopHttp = await save({ providers: [provUrl('p2', '本机', 'http://127.0.0.1:11434')] });
+      out.privHttp = await save({ providers: [provUrl('p3', '局域网', 'http://192.168.2.156:11434/v1')] });
+      out.httpsOk = await save({ providers: [provUrl('p4', '公网加密', 'https://pub.example.com/v1')] });
 
       // 5) 默认提供商被删掉后不得留悬空引用：下一回合会去读一个不存在的提供商
       fs.writeFileSync(FILE, JSON.stringify({ providers: [prov('a', 'A'), prov('b', 'B')], defaultProvider: 'a' }), 'utf-8');
@@ -260,6 +268,15 @@ const cred = require('./dist/credentials.js');
     assert.strictEqual(g.dangling.ok, true, `删除保存本身应成功：${JSON.stringify(g.dangling)}`);
     assert.strictEqual(g.danglingDefault, 'b',
       `defaultProvider 指向已删的 a 时必须兜到现存提供商，实际落盘为 ${JSON.stringify(g.danglingDefault)}`);
+  });
+
+  await check('公网明文 baseUrl 被拒且磁盘未动，回环/私网/https 照常放行（BUG-054）', () => {
+    assert.strictEqual(g.pubHttp.ok, false, `公网 http 应被拒，实际 ${JSON.stringify(g.pubHttp)}`);
+    assert.ok(String(g.pubHttp.reason).includes('https'), '拒绝理由要说清改用 https：' + g.pubHttp.reason);
+    assert.strictEqual(g.pubHttpUnchanged, true, '被拒的保存不得改动磁盘上的模型配置');
+    assert.strictEqual(g.loopHttp.ok, true, `本机回环 http 必须放行：${JSON.stringify(g.loopHttp)}`);
+    assert.strictEqual(g.privHttp.ok, true, `私网 http 必须放行：${JSON.stringify(g.privHttp)}`);
+    assert.strictEqual(g.httpsOk.ok, true, `https 必须放行：${JSON.stringify(g.httpsOk)}`);
   });
 
   try { fs.rmSync(HOME2, { recursive: true, force: true }); } catch {}

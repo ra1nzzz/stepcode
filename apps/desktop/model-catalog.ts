@@ -12,6 +12,8 @@
  * API，已实测），因此「KEY 能拉什么」只能问提供商自己。
  */
 
+import { isProviderBaseUrlAllowed } from './common-tools';
+
 export const CATALOG_URL = 'https://models.dev/api.json';
 export const CATALOG_TTL_MS = 24 * 60 * 60 * 1000;
 const CATALOG_FILE = 'models-dev-catalog.json';
@@ -296,7 +298,9 @@ function classifyHttp(status: number): LiveFailKind {
 
 async function fetchOnce(url: string, apiKey: string | undefined, fetchImpl: FetchImpl): Promise<{ ok: true; json: unknown } | { ok: false; kind: LiveFailKind; status?: number }> {
   const headers: Record<string, string> = {};
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  // BUG-054：探测同样会带 key。明文 http 且非回环时**不发凭据**（宁可让服务端回 401、
+  // 被归类成 auth 失败），否则一次「测试连接」就把解密后的密钥送上不安全链路。
+  if (apiKey && isProviderBaseUrlAllowed(url).ok) headers.Authorization = `Bearer ${apiKey}`;
   let res: Awaited<ReturnType<FetchImpl>>;
   try {
     res = await fetchImpl(url, { headers, signal: AbortSignal.timeout(LIVE_TIMEOUT_MS) });

@@ -247,6 +247,53 @@ const CATALOG_FIXTURE = {
     assert.strictEqual(r.matched, undefined);
   });
 
+  // ---- H. BUG-054：baseUrl 协议/主机闸门 ----
+  await checkA('H1 isProviderBaseUrlAllowed：https 放行、http 仅回环、其它协议与伪造前缀一律拒', async () => {
+    const CT = await importTs('common-tools.ts');
+    const cases = [
+      ['https://api.example.com/v1', true],
+      ['http://127.0.0.1:11434', true],
+      ['http://localhost:11434', true],
+      ['http://[::1]:11434', true],
+      ['http://[::ffff:7f00:1]:11434', true],
+      ['http://2130706433:11434', true],
+      ['http://192.168.2.156:11434', true],
+      ['http://10.0.0.5:11434', true],
+      ['http://172.16.0.1:11434', true],
+      ['http://172.32.0.1:11434', false],
+      ['http://169.254.1.1:11434', false],
+      ['http://8.8.8.8:11434', false],
+      ['http://[fe80::1]:11434', false],
+      ['http://api.example.com/v1', false],
+      ['api.example.com', false],
+      ['', false],
+      ['file:///etc/passwd', false],
+      ['ws://h:8080', false],
+      ['http://127.0.0.1.evil.test/x', false],
+      ['http://127.999.1.1/x', false],
+    ];
+    for (const [url, expect] of cases) {
+      const r = CT.isProviderBaseUrlAllowed(url);
+      assert.strictEqual(r.ok, expect, `${JSON.stringify(url)} 应为 ${expect}，实际 ${JSON.stringify(r)}`);
+      if (!expect) assert.ok(typeof r.reason === 'string' && r.reason.length > 4, '拒绝必须带可展示理由：' + url);
+    }
+  });
+
+  await checkA('H2 明文 http 的探测不带 Authorization（回环除外），https 照旧带 Bearer', async () => {
+    const s = makeStubs();
+    MC.initModelCatalog({ cacheDir: 'C:/fake/cache', fetchImpl: s.fetchImpl, now: s.now, readFile: s.readFile, writeFile: s.writeFile });
+    s.route('https://models.dev/api.json', async () => ({ ok: true, status: 200, json: async () => CATALOG_FIXTURE }));
+    s.route('http://clear.example/v1/models', async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'x' }] }) }));
+    await MC.listAvailableModels({ type: 'openai-compatible', baseUrl: 'http://clear.example/v1', apiKey: 'SECRET-LEAK-CHECK' });
+    const clear = s.fetchLog.find((e) => e.url === 'http://clear.example/v1/models');
+    assert.ok(clear, '明文端点的探测应发生过');
+    assert.strictEqual(clear.auth, undefined, '明文中立主机不得带上凭据：' + JSON.stringify(clear.auth));
+    s.route('http://127.0.0.1:1/models', async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'y' }] }) }));
+    await MC.listAvailableModels({ type: 'openai-compatible', baseUrl: 'http://127.0.0.1:1', apiKey: 'local-key' });
+    const loop = s.fetchLog.find((e) => e.url === 'http://127.0.0.1:1/models');
+    assert.ok(loop && typeof loop.auth === 'string' && loop.auth.startsWith('Bearer '), '本机回环仍可带 key：' + JSON.stringify(loop && loop.auth));
+  });
+
   await checkA('F3 live 失败 + 目录匹配 → catalog 回退（中文 reason 不带出）', async () => {
     const s = makeStubs();
     MC.initModelCatalog({ cacheDir: 'C:/fake/cache', fetchImpl: s.fetchImpl, now: s.now, readFile: s.readFile, writeFile: s.writeFile });

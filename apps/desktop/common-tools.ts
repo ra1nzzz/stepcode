@@ -81,3 +81,54 @@ export function toBool(v: unknown, dflt = false): boolean {
   if (typeof v === 'number') return v !== 0 && Number.isFinite(v);
   return Boolean(v);
 }
+
+/**
+ * BUG-054：`baseUrl` 决定「解密后的 API Key 发到哪里」，而这条链上原本什么都不校验：
+ * `model-client.ts` 把 key 放进 `Authorization: Bearer`，`model-catalog.ts` 的探测同样带 key，
+ * 于是 `http://` 的兼容端点会让凭据在链路里裸奔。浏览器侧早有 `isBlockedHost`（SSRF），模型侧一处没用。
+ *
+ * 规则不能一刀切要 https：本壳的零配置入口就是 `http://127.0.0.1:11434`（Ollama 本机默认），
+ * 局域网自建模型服务也是常见合法场景，所以：
+ *   · `https:` 一律放行（主机不限，SSRF 面由各自的出网守卫管）；
+ *   · `http:` 只放行回环（localhost / *.localhost / 127/8 / ::1 及其 IPv4-mapped 形态）与 RFC1918 私网
+ *     （局域网自建模型服务是真实场景；公网 http 才是会穿越不可信链路的那一段）；
+ *   · 其它协议（含无协议、`file:`、`ws:` 等）与解析失败一律拒——fail-closed，不猜用户意图。
+ */
+export function isProviderBaseUrlAllowed(url: unknown): { ok: true } | { ok: false; reason: string } {
+  const raw = typeof url === 'string' ? url.trim() : '';
+  if (!raw) return { ok: false, reason: '缺少 baseUrl' };
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return { ok: false, reason: `baseUrl 无法解析：${raw}` };
+  }
+  const proto = u.protocol.toLowerCase();
+  if (proto === 'https:') return { ok: true };
+  if (proto !== 'http:') {
+    return { ok: false, reason: `只允许 https 或本机回环的 http，当前协议是 ${proto || '（无）'}` };
+  }
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost')) return { ok: true };
+  // 必须是完整四段、每段 ≤255 的 127/8 点分十进制；用 `^127\.` 前缀匹配会把
+  // `127.0.0.1.evil.test` 这种攻击者域名当成回环放行（本轮自己写的用例抓到）。
+  // WHATWG 会把 http://2130706433 归一成 127.0.0.1，所以整数写法也一并覆盖。
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  const octets = v4 && v4.slice(1).every((o) => Number(o) <= 255) ? v4.slice(1).map(Number) : null;
+  // 127/8 回环
+  const o0 = octets ? octets[0] ?? -1 : -1;
+  const o1 = octets ? octets[1] ?? -1 : -1;
+  if (octets && o0 === 127) return { ok: true };
+  // RFC1918 私网（10/8、172.16-31、192.168/16）：局域网自建模型服务是真实场景（本机 NAS 就是 192.168.2.x），
+  // 明文凭据只在同一二层网内流转；公网 http 仍然一律拒——那才是会穿越不可信链路的那一段。
+  if (octets && (o0 === 10 || (o0 === 172 && o1 >= 16 && o1 <= 31) || (o0 === 192 && o1 === 168))) return { ok: true };
+  if (host === '::1') return { ok: true };
+  if (/^fe80:/.test(host)) return { ok: false, reason: '链路本地地址不允许明文 http（IPv6 fe80::/10）' };
+  const mapped = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mapped) {
+    const hi = parseInt(mapped[1]!, 16);
+    const lo = parseInt(mapped[2]!, 16);
+    if ((hi >> 8) === 127) return { ok: true };
+  }
+  return { ok: false, reason: '明文 http 只允许本机回环或私网地址；公网端点请改用 https' };
+}

@@ -5,6 +5,7 @@
 import { normalizeNativeToolCalls, type ApiMessage, type ModelReply, type NativeToolCall, TOOL_DEFS } from './agent-runtime';
 import { normalizeApiUsage } from './usage-registry';
 import { logModel } from './logger';
+import { isProviderBaseUrlAllowed } from './common-tools';
 
 export type ModelProviderLike = {
   name: string;
@@ -595,6 +596,10 @@ export async function callOpenAICompatible(
   const apiKey = decryptKeyFn(provider.apiKeyEnc);
   if (!apiKey) throw new Error(`提供商「${provider.name}」未配置 API Key，请先在设置页配置`);
   const mode = provider.apiMode || 'chat';
+  // BUG-054：这里就是密钥出门的地方——先把「发往哪里」校验掉，不合法就拒发（fail-closed），
+  // 而不是先把 Bearer 头组好再祈祷用户没填 http。
+  const baseGate = isProviderBaseUrlAllowed(provider.baseUrl);
+  if (!baseGate.ok) throw new Error(`提供商「${provider.name}」的 baseUrl 被拒绝：${baseGate.reason}`);
   const base = provider.baseUrl.replace(/\/+$/, '');
 
   const canUseTools = mode === 'chat' && toolDefs.length > 0;
