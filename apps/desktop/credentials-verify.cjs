@@ -480,7 +480,7 @@ const cred = require('./dist/credentials.js');
     assert.ok(out.error && out.error.includes('沙箱服务已停止'), '写文件应被停止的沙箱拒绝，实际: ' + JSON.stringify(out).slice(0, 200));
   });
 
-  await check('file_write 审批放行后写入成功（授权门正向链路）', async () => {
+  await check('file_write 审批放行后仍被拒——宿主服务句柄从未被装配（BUG-052 的现状记录，非期望行为）', async () => {
     const out = await runToolProbe('file_write', { path: '__DATA__/probe-written.txt', content: 'hello-gate' }, { approve: true });
     assert.ok(out.error && out.error.includes('沙箱服务已停止'), '沙箱停止后不得写入，实际: ' + JSON.stringify(out).slice(0, 200));
   });
@@ -502,11 +502,13 @@ const cred = require('./dist/credentials.js');
   });
 
   // ---- M4：沙箱模式在工具执行层真实强制（安全审查 M2：此前 mode 只活在审批门）----
-  await check('M4 read-only 模式：file_write 被模式门拒绝（不经过授权门）', async () => {
+  // BUG-052 的现状：句柄恒 null，所以这两条实际拒于「沙箱服务已停止」，不是拒于模式门——
+  // 标题以前写「被模式门拒绝」是误导（断言与标题相反），改按实际断言的东西命名。
+  await check('M4：句柄缺失时 file_write 被拒（模式门尚未被真正测到）', async () => {
     const out = await runToolProbe('file_write', { path: '__DATA__/ro.txt', content: 'x' }, { readOnly: true });
     assert.ok(out.error && out.error.includes('沙箱服务已停止'), '沙箱停止后写文件应被拒，实际: ' + JSON.stringify(out).slice(0, 200));
   });
-  await check('M4 read-only 模式：shell_command 被模式门拒绝', async () => {
+  await check('M4：句柄缺失时 shell_command 被拒（同上）', async () => {
     const out = await runToolProbe('shell_command', { command: 'echo hi' }, { readOnly: true });
     assert.ok(out.error && out.error.includes('沙箱服务已停止'), '沙箱停止后命令应被拒，实际: ' + JSON.stringify(out).slice(0, 200));
   });
