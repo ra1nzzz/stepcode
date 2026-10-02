@@ -7,7 +7,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { IpcMain } from 'electron';
-import { encryptSecret, decryptSecret } from './credentials';
+import { encryptSecret, decryptSecret, isV1Cipher } from './credentials';
 import { DATA_FILE_NAMES } from './data-dir';
 import { getHostServices } from './host-services';
 import { log } from './logger';
@@ -82,7 +82,7 @@ function persistMcp(): boolean {
       const envEnc: Record<string, string> = {};
       if (cfg.env) {
         for (const [k, v] of Object.entries(cfg.env)) {
-          envEnc[k] = /^v1:/.test(v) ? v : encryptSecret(v);
+          envEnc[k] = isV1Cipher(v) ? v : encryptSecret(v);
         }
       }
       toWrite.servers[id] = { ...cfg, env: Object.keys(envEnc).length ? envEnc : undefined };
@@ -99,7 +99,7 @@ function persistMcp(): boolean {
 function decryptMcpConfig(cfg: McpServerConfig): McpServerConfig {
   if (!cfg.env) return cfg;
   const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(cfg.env)) env[k] = /^v1:/.test(v) ? decryptSecret(v) : v;
+  for (const [k, v] of Object.entries(cfg.env)) env[k] = isV1Cipher(v) ? decryptSecret(v) : v;
   return { ...cfg, env };
 }
 
@@ -146,7 +146,7 @@ export function registerMcpIpc(ipc: IpcMain): void {
     // env 值先加密再入内存表，避免明文常驻。
     if (cfg.env) {
       const envEnc: Record<string, string> = {};
-      for (const [k, v] of Object.entries(cfg.env)) envEnc[k] = /^v1:/.test(v) ? v : encryptSecret(v);
+      for (const [k, v] of Object.entries(cfg.env)) envEnc[k] = isV1Cipher(v) ? v : encryptSecret(v);
       cfg.env = envEnc;
     }
     mcpStore.servers[cfg.id] = cfg;

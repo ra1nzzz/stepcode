@@ -595,6 +595,22 @@ const cred = require('./dist/credentials.js');
     assert.ok(badOut.error && badOut.error.includes('沙箱服务已停止'), '沙箱停止后非写路径也应被拒，实际: ' + JSON.stringify(badOut).slice(0, 200));
   });
 
+  // BUG-062：形状歧义——只看前缀会把「以 v1: 开头的明文」当成已有密文，于是明文落盘、读回又静默变空串。
+  check('isV1Cipher 认完整形状而不是前缀', () => {
+    assert.equal(cred.isV1Cipher('v1:hello'), false, '只有一段不该算密文');
+    assert.equal(cred.isV1Cipher('v1:aaa:bbb:ccc'), true);
+    assert.equal(cred.isV1Cipher('v2:aaa:bbb:ccc'), false, '版本换了不该算 v1 密文');
+    assert.equal(cred.isV1Cipher(''), false);
+    assert.equal(cred.isV1Cipher(undefined), false);
+  });
+  check('以密文前缀开头的明文仍能加密往返（不被误当已有密文）', () => {
+    const tricky = 'v1:looks-like-cipher';
+    const enc = cred.encryptSecret(tricky);
+    assert.equal(cred.isV1Cipher(enc), true, '本模块产出的密文必须自认是密文');
+    assert.equal(enc.includes(tricky), false, '密文里不该出现明文原串');
+    assert.equal(cred.decryptSecret(enc), tricky);
+  });
+
   // -------------------------------------------------------------------------
   console.log('\n' + log.join('\n'));
   console.log(`\n结果: ${passed} 通过, ${failed} 失败, 共 ${passed + failed} 项\n`);

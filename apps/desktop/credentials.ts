@@ -53,9 +53,16 @@ function deriveKey(): Buffer {
   return cachedKey;
 }
 
-/** 是否为本模块产出的 v1 密文。 */
+/**
+ * 是否为本模块产出的 v1 密文。
+ * 判据必须看**完整形状**（`v1:<iv>:<tag>:<ciphertext>` 四段），不能只看前缀：
+ * 只看前缀时，用户真的把某个以 `v1:` 开头的明文（版本号之类的 token）交进来，会被当成已有密文
+ * 原样落盘（明文密钥进磁盘），读回时又被送去解密、静默变成空串（实测 `decryptSecret('v1:hello')` 返回 ""）。
+ * ipc-mcp 的 MCP env 就吃过这个形状歧义，见 BUG-062。
+ */
+const V1_CIPHER_RE = /^v1:[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/;
 export function isV1Cipher(enc: string | undefined): boolean {
-  return typeof enc === 'string' && enc.startsWith(`${CIPHER_PREFIX}:`);
+  return typeof enc === 'string' && V1_CIPHER_RE.test(enc);
 }
 
 /** AES-256-GCM 加密，输出 base64 字符串。空串原样返回。 */
