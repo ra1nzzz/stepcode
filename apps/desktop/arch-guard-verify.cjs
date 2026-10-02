@@ -708,6 +708,83 @@ function scanRule(rule, code, fileName) {
     }
   });
 
+  // ---------------- R30：子进程的 env 只能走净化后的那一份 ----------------
+  await check('R30 生成子进程不得整份继承宿主 env，例外必须写明理由且自证仍成立', () => {
+    // BUG-049 的守门版。曾经有两张各自漂移的剔除清单，且都不剥数据目录定位变量，
+    // 于是第三方 MCP server 从自己的 env 里就能读出 ORCHDESK_DATA_DIR / ORCHDESK_HOME，
+    // 直接定位到放着 sandbox.json、凭据与会话历史的数据目录。规矩收成一条：
+    //   ① 禁止把宿主 env 整份交出去（`env: process.env` 或 `env: { ...process.env }`）；
+    //   ② 真的生成子进程的文件必须要么显式净化（buildChildEnv / sanitizeTerminalEnv / CHILD_ENV_STRIP），
+    //      要么进下面的例外表并写明为什么继承可以接受；
+    //   ③ 例外表自证（照 R24 的规矩）：点名的文件必须确实还在生成子进程，否则该删这条例外。
+    const banned = [
+      /env:\s*process\.env/,
+      /env:\s*\{\s*\.\.\.process\.env/,
+    ];
+    // 正控：两种坏写法必须都咬得住，干净写法不该误伤。
+    assert(banned.some((re) => re.test('spawn(cmd, args, { env: process.env })')), 'R30 正控 1 失配');
+    assert(banned.some((re) => re.test('spawn(cmd, args, { env: { ...process.env, X: 1 } })')), 'R30 正控 2 失配');
+    assert(!banned.some((re) => re.test('const env = buildChildEnv(config.env); spawn(cmd, args, { env })')),
+      'R30 正控 3 失配：净化后的写法不该判红');
+
+    // 注意 exec 这个词：正则对象的 `.exec(src)` 也叫它，必须排除，否则 logger.ts /
+    // agent-runtime.ts 里 `RE_TOOL_TAG.exec(src)` 会被当成生成子进程（本轮就是这么假红的）。
+    const SPAWN_RE = /(?<![.\w$])(?:spawn|spawnSync|execFile|execFileSync|execSync|fork)\s*\(|(?<![.\w$])exec\s*\(\s*[^)]/;
+    const REGEX_EXEC_RE = /[.)\w$]\s*\.exec\s*\(/;
+    const CLEAN_RE = /buildChildEnv|sanitizeTerminalEnv|CHILD_ENV_STRIP/;
+    // 例外：调的是 git / tsc 这类不理解本壳变量的外部命令，且不经过 Shell。
+    const INHERIT_OK = {
+      'step-extension.ts': '只对 git 跑 remote/log 只读探查，git 不理解 ORCHDESK_* 变量',
+      'step-follow.ts': '只对 git 与 tsc 跑只读与构建探查，同上',
+    };
+
+    const offenders = [];
+    const unexplained = [];
+    let spawners = 0;
+    for (const abs of desktopTsFiles()) {
+      const rel = path.basename(abs);
+      const src = stripComments(read(abs));
+      // 只有真的调用过 spawn/exec 才算；纯正则 .exec() 的文件在这里被排除。
+      const realSpawns = src.split('\n').filter((l) => SPAWN_RE.test(l) && !REGEX_EXEC_RE.test(l));
+      if (realSpawns.length === 0) continue;
+      spawners++;
+      const ls = src.split(/\r?\n/);
+      for (let k = 0; k < ls.length; k++) {
+        if (!banned.some((re) => re.test(ls[k]))) continue;
+        offenders.push(rel + ':' + (k + 1) + '  ' + ls[k].trim().slice(0, 90));
+      }
+      // 每个真的生成子进程的调用点都必须显式交代 env。只看文件里出现过 buildChildEnv 不够——
+      // 把调用点的 env 参数删掉、留下一个没人用的导入，正好是这条规则一开始的空转形态
+      // （本轮用「删掉 shell exec 的 env」变异时才暴露）。例外表里的文件才允许不传。
+      if (!INHERIT_OK[rel]) {
+        for (let k = 0; k < ls.length; k++) {
+          const l = ls[k];
+          if (REGEX_EXEC_RE.test(l) || !SPAWN_RE.test(l)) continue;
+          const window = ls.slice(k, k + 14).join('\n');
+          // 认 `env:`、也认对象简写 `{ env, stdio }`——只认冒号写法会把净化过的调用点误判成漏传。
+          if (/(?:^|[^A-Za-z0-9_$])env\s*[,:}]/.test(window)) continue;
+          offenders.push(rel + ':' + (k + 1) + '  ' + l.trim().slice(0, 80) + '  ← 调用点没传 env，宿主变量整份进子进程');
+        }
+      }
+      if (!CLEAN_RE.test(src) && !INHERIT_OK[rel]) unexplained.push(rel);
+    }
+    assert(offenders.length === 0,
+      '以下位置把宿主 env 整份交给子进程（应走 buildChildEnv / sanitizeTerminalEnv）：\n  ' + offenders.join('\n  '));
+    assert(unexplained.length === 0,
+      '以下文件生成子进程却既没净化 env、也没写明例外理由：' + unexplained.join(', '));
+    assert(REGEX_EXEC_RE.test('while ((m = RE_TOOL_TAG.exec(src)) !== null)'), 'R30 正控 4 失配：正则 .exec 没被识别出来');
+    assert(!SPAWN_RE.test('const m = /^x/.exec(f);') || REGEX_EXEC_RE.test('const m = /^x/.exec(f);'), 'R30 正控 5 失配：正则 .exec 未被排除');
+    assert(SPAWN_RE.test('const child = exec(cmd, { cwd })'), 'R30 正控 6 失配：真正的 exec 命令没被认出来');
+    assert(spawners >= 2, 'R30 扫描面塌了：只看到 ' + spawners + ' 个生成子进程的文件');
+    for (const name of Object.keys(INHERIT_OK)) {
+      const abs = path.join(APP_DIR, name);
+      assert(fs.existsSync(abs), 'R30 例外点名了不存在的文件：' + name);
+      assert(SPAWN_RE.test(stripComments(read(abs))),
+        'R30 例外已过期（该文件不再生成子进程）：' + name + ' —— ' + INHERIT_OK[name]);
+      assert(INHERIT_OK[name].length > 8, 'R30 例外的理由太短，不构成理由：' + name);
+    }
+  });
+
   /* ---------------- R12：数据目录单源（M3）——禁止 env 直读复辟 ---------------- */
 
   await check('R12 数据目录单源：除 data-dir.ts 与 main.ts 赋值点外禁止直读 ORCHDESK_DATA_DIR', () => {

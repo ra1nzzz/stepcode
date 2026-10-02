@@ -126,6 +126,19 @@ export function normalizeTerminalCreate(
 // ---------------------------------------------------------------------------
 
 /** 返回净化后的环境副本（不改原对象）；命中清单的 key 一律剔除。 */
+export function buildChildEnv(extra?: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === null || v === undefined) continue;
+    if (CHILD_ENV_STRIP.includes(k)) continue;
+    env[k] = v;
+  }
+  // extra 最后覆盖：调用方显式赋的值是它的决定，不是宿主的泄漏。
+  if (extra) Object.assign(env, extra);
+  return env;
+}
+
+/** 返回净化后的环境副本（不改原对象）；命中清单的 key 一律剔除。 */
 export function sanitizeTerminalEnv(
   env: Record<string, string | undefined>,
 ): Record<string, string> {

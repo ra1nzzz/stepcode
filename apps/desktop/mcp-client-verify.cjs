@@ -15,6 +15,7 @@ const os = require('os');
 
 const APP_DIR = __dirname;
 const MCP = require(path.join(APP_DIR, 'dist', 'mcp-client.js'));
+const TT = require(path.join(APP_DIR, 'dist', 'terminal-tools.js'));
 
 let passed = 0; let failed = 0; const log = [];
 async function check(name, fn) {
@@ -65,12 +66,12 @@ rl.on('line', (line) => {
     process.env.NODE_OPTIONS = '--require shim.cjs';
     process.env.KEEP_ME = 'ordinary-value';
     try {
-      const env = MCP.buildChildEnv(undefined);
+      const env = TT.buildChildEnv(undefined);
       for (const k of ['ORCHDESK_HOME', 'ORCHDESK_DATA_DIR', 'ORCHDESK_STEP_RUNTIME', 'NODE_OPTIONS']) {
         assert(!(k in env), `${k} 不该进 MCP 子进程 env`);
       }
       assert(env.KEEP_ME === 'ordinary-value', '普通变量必须保留');
-      const withExtra = MCP.buildChildEnv({ ORCHDESK_HOME: '/deliberate/path' });
+      const withExtra = TT.buildChildEnv({ ORCHDESK_HOME: '/deliberate/path' });
       assert(withExtra.ORCHDESK_HOME === '/deliberate/path', 'config.env 显式赋值必须赢过剔除');
     } finally {
       for (const k of ['ORCHDESK_HOME', 'ORCHDESK_DATA_DIR', 'ORCHDESK_STEP_RUNTIME', 'NODE_OPTIONS', 'KEEP_ME']) {

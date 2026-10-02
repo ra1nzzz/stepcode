@@ -32,6 +32,7 @@ import {
   screenshotBrowser,
 } from './browser-cdp';
 import { getService } from './dsh-runtime';
+import { buildChildEnv } from './terminal-tools';
 import { FILE_READ_MAX_BYTES } from './file-panel';
 import { getHostServices, isBlockedHost } from './host-services';
 import type { SandboxLogEntry } from './sandbox-log';
@@ -467,6 +468,11 @@ export async function executeTool(tool: ToolCall, sessionCtx?: { sessionId?: str
         try {
           const output = await new Promise<string>((resolve, reject) => {
             const child = exec(cmd, {
+              // BUG-050：这里以前不传 env，node 的 exec 于是把宿主 env 整份交给子进程——
+              // 而这正是三个出口里最常被走到的一条：Agent 每跑一条白名单命令、每过一次审批命令都算。
+              // 后果与 BUG-049 同源：命令能读到自己不该知道的 ORCHDESK_DATA_DIR / ORCHDESK_HOME，
+              // 也就是能定位那个放着 sandbox.json、凭据与会话历史的目录。
+              env: buildChildEnv(),
               cwd,
               encoding: 'utf-8',
               timeout: 30_000,
