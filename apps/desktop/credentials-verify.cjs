@@ -272,7 +272,7 @@ const cred = require('./dist/credentials.js');
   const entry = (o) => Object.assign({ tool: 'file_write', kind: 'approval', target: 'D:/w/a.txt', decision: 'allowed', ts: 1700000000000 }, o || {});
 
   await check('归一化：完整条目保留', () => {
-    const e = sb.normalizeSandboxEntry(entry({ reason: '已写入', mode: 'default', sessionId: 's1' }));
+    const e = sb.normalizeSandboxEntry(entry({ reason: '已写入', mode: 'autopilot', sessionId: 's1' }));
     assert.ok(e, '应通过归一化');
     assert.strictEqual(e.tool, 'file_write');
     assert.strictEqual(e.reason, '已写入');

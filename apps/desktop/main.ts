@@ -475,25 +475,19 @@ function nowTime(): string { return new Date().toLocaleTimeString('zh-CN', { hou
 // --- 工具执行引擎：见 tool-exec.ts ---
 
 /**
- * 授权门（PRD L3/L4 / T-P3-2）：paranoid（只读）直接拒；default/trusted 过 GUI 审批；
- * 审批链路不可用一律 fail-closed（与 ADR-0008 intent 的「基础设施缺失放行」边界不同——
- * 走此门的操作兜底不足：命令白名单含万能 shell、file_write 可覆盖白名单内任意文件）。
+ * 授权门（PRD L3/L4 / T-P3-2）：审批链路不可用一律 fail-closed（与 ADR-0008 intent 的
+ * 「基础设施缺失放行」边界不同——走此门的操作兜底不足：命令白名单含万能 shell、
+ * file_write 可覆盖白名单内任意文件）。
+ * BUG-043：这里原本还挂着一整套授权阶梯（读 authzService.getMode()、paranoid 直接拒、
+ * matchGrant 白名单压倒审批）。`authzService` 在 973 行声明后唯一写入是 `= null` 且不导出，
+ * 所以 mode 恒等于 'default'、paranoid 分支与白名单命中全不可达，还让每条沙箱日志都被盖上
+ * SPEC 判死的字面值 `default`。删掉死阶梯，只留唯一有语义的判断：没有审批服务就拒。
  * @returns null = 放行；字符串 = 拒绝原因。
  */
 async function approvalGate(toolName: string, reason: string, sessionId?: string, target?: string, signal?: AbortSignal): Promise<string | null> {
-  let mode = 'default';
-  try { mode = (await authzService?.getMode()) || 'default'; } catch { /* 缺省 default */ }
-  noteAuthMode(mode);
-  // 偏执模式压倒白名单：用户切到 paranoid 的意图就是「全锁」，
-  // 此前点过的「永久允许」不该悄悄再把门打开（可在设置页撤销白名单）。
-  if (mode === 'paranoid') return 'paranoid（只读）模式下禁止该操作';
-
-  // PRD FR-9：会话 / 永久白名单命中 → 直接放行（插件侧已 hits++ 并入审计）。
-  const grant = authzService?.matchGrant?.({ toolName, target, sessionId });
-  if (grant) {
-    log('INFO', 'authz', `白名单放行：${toolName} · ${grant.pattern}（${grant.scope}，累计 ${grant.hits} 次）`);
-    return null;
-  }
+  // 日志里的「当时生效的模式」改记真实 GUI 档（bypass / autopilot）；运行时没起来就记空串，
+  // ipc-sandbox 的归一化会把空 mode 整条丢掉——宁可不写，也不写一个恒等的假值。
+  noteAuthMode(currentStepExtension()?.preset ?? '');
 
   const approval = getHostServices()?.approval;
   if (!approval) return '授权审批服务不可用，操作被拒绝（fail-closed）';

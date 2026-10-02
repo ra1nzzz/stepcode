@@ -27,7 +27,7 @@ export type SandboxIpcHost = {
 let host: SandboxIpcHost | undefined;
 let sandboxLog: SandboxLogEntry[] = [];
 /** 最近一次读到的授权模式（getMode 是异步的，日志只能留快照）。 */
-let lastAuthMode = 'default';
+let lastAuthMode = '';
 
 export function initSandbox(deps: SandboxIpcHost): void {
   host = deps;
