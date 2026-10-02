@@ -505,6 +505,80 @@ function scanRule(rule, code, fileName) {
     assert(mainSrc.includes('function rendererWindow'), 'rendererWindow 仍应存在，供通知类通道使用');
   });
 
+  // ---------------- R24：每个 .ts 模块要么从 main.ts 可达，要么被点名豁免 ----------------
+  // 「全面审阅」要给出覆盖面，而不是「跑了 35 个套件都绿」。这条把可达性变成门禁：
+  // 一个模块既不被主进程引用、又不被任何套件加载时，它的所有断言与行为都是空话，
+  // 而且会随重构悄悄烂掉（本轮实测就抓到 event-emit / event-consumer 整簇无人接线）。
+
+  await check('R24 模块可达性：不可达且无套件加载的 .ts 必须在豁免清单里写明理由', () => {
+    const resolveSpec = (from, spec) => {
+      if (!spec.startsWith('.')) return null;
+      const base = path.resolve(path.dirname(from), spec);
+      for (const c of [base + '.ts', base + '.js', path.join(base, 'index.ts'), base]) {
+        if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
+      }
+      return null;
+    };
+    const specsOf = (file) => {
+      let src = '';
+      try { src = read(file); } catch { return []; }
+      const out = [];
+      const re = /(?:from\s*|import\s*\(\s*|require\s*\(\s*)['"]([^'"]+)['"]/g;
+      let m;
+      while ((m = re.exec(src))) {
+        const r = resolveSpec(file, m[1]);
+        if (r) out.push(r);
+      }
+      return out;
+    };
+
+    const allTs = fs.readdirSync(APP_DIR).filter((f) => f.endsWith('.ts')).map((f) => path.join(APP_DIR, f));
+    const suites = fs.readdirSync(APP_DIR).filter((f) => /-verify\.(cjs|mjs)$/.test(f)).map((f) => path.join(APP_DIR, f));
+
+    const reachable = new Set();
+    const stack = [path.join(APP_DIR, 'main.ts')];
+    while (stack.length) {
+      const f = stack.pop();
+      if (reachable.has(f) || !fs.existsSync(f)) continue;
+      reachable.add(f);
+      for (const d of specsOf(f)) stack.push(d);
+    }
+    const loaded = new Set();
+    for (const s of suites) {
+      for (const d of specsOf(s)) loaded.add(d);
+      const distRe = /dist[\\/]+([A-Za-z0-9._-]+)\.js/g;
+      let m;
+      while ((m = distRe.exec(read(s)))) {
+        const c = path.join(APP_DIR, m[1] + '.ts');
+        if (fs.existsSync(c)) loaded.add(c);
+      }
+    }
+
+    // 豁免必须带理由；新增豁免要连同缺陷条目一起写。
+    const UNWIRED = {
+      'event-emit.ts': 'BUG-035：canonical 事件发射与 SSE/WS 消费者整簇未接线（CHANGELOG 的 phase8 遗留，主进程不引用、docs 不声称）',
+      'event-emit-verify.ts': 'BUG-035：上面那簇的 .ts 版测试，不在 verify 链上；与 event-emit-verify.cjs 同名的它按 node 直跑必失败',
+      'event-emit-quick-verify.ts': 'BUG-035：同上，快速版探针',
+      'preload.ts': '由 webPreferences.preload 以路径字符串引用，不是静态 import，可达性扫不到（属真在用）',
+    };
+    const orphans = allTs.filter((f) => !reachable.has(f) && !loaded.has(f))
+      .map((f) => path.basename(f))
+      .filter((name) => !UNWIRED[name]);
+    assert(orphans.length === 0,
+      `以下模块既从 main.ts 不可达、也没有任何套件加载，且未在豁免里说明：\n  ${orphans.join('\n  ')}`);
+    // 正控：豁免清单不能变成永远为真的空集——被点名的模块必须确实存在且确实不可达。
+    for (const name of Object.keys(UNWIRED)) {
+      const abs = path.join(APP_DIR, name);
+      assert(fs.existsSync(abs), `豁免点名了不存在的模块：${name}（该删这条豁免）`);
+      assert(!reachable.has(abs) && !loaded.has(abs),
+        `${name} 现在已被引用或加载，豁免已过期，应移出清单`);
+    }
+    // 反向保护：主进程确实在用的模块必须落在可达集里，否则是扫描器坏掉。
+    for (const must of ['step-session.ts', 'tool-exec.ts', 'ipc-mcp.ts', 'logger.ts']) {
+      assert(reachable.has(path.join(APP_DIR, must)), `${must} 应从 main.ts 可达——可达性扫描失效`);
+    }
+  });
+
   /* ---------------- R12：数据目录单源（M3）——禁止 env 直读复辟 ---------------- */
 
   await check('R12 数据目录单源：除 data-dir.ts 与 main.ts 赋值点外禁止直读 ORCHDESK_DATA_DIR', () => {
