@@ -202,7 +202,14 @@ export class GuanjiClient {
    *   配置了 TOKEN 不等于已授权——L3/L4 强制授权不可凭 token 绕过。
    */
   capabilityReview(skill: GuanjiSkill, authorized = false): 'allowed' | 'needs-auth' | 'denied' {
-    if (skill.auth === 1 && !authorized) return 'needs-auth';
+    // auth 只由能力清单推导，不信调用方自报：`orchdesk:guanji-install` 的整个 skill
+    // 对象来自渲染层（IPC 入参），自报 auth=0 就能跳过 L3/L4 的显式授权确认。
+    // 推导口径与本文件解析列表时的那一份完全相同（同一个 LOW_RISK_CAPS）。
+    const caps = Array.isArray(skill?.caps)
+      ? skill.caps.filter((c): c is string => typeof c === 'string')
+      : [];
+    const auth = caps.some((c) => !LOW_RISK_CAPS.has(c)) ? 1 : 0;
+    if (auth === 1 && !authorized) return 'needs-auth';
     return 'allowed';
   }
 
