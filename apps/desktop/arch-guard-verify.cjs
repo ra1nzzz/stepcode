@@ -870,6 +870,16 @@ function scanRule(rule, code, fileName) {
       'R34 反控失配：同名前缀的别的标识符不该误判');
     assert(offenders.length === 0,
       '生产代码接回了旧回合循环的残留表面（要先有决策记录，再改这份名单）：' + offenders.join(', '));
+
+    // BUG-061 清理完成后，这条的第二半从「不许引用」升级成「定义本身不许复辟」：
+    // 只挡引用的话，把整段实现再抄一遍就又能绕过；定义不在，抄回来必须在这里红。
+    const home = stripComments(read(path.join(APP_DIR, 'agent-runtime.ts')));
+    const resurrected = DEAD_EXPORTS.filter((sym) => new RegExp('export (?:function|const) ' + sym + '\\b').test(home));
+    assert(resurrected.length === 0,
+      'agent-runtime.ts 里被删除的残留表面又出现了（BUG-061 已清理，复辟需要新决策）：' + resurrected.join(', '));
+    // 反向自证：这条断言不是恒真——用一条「长得像被删符号的定义」验证正则确实认得这种形态。
+    assert(/export (?:function|const) extractToolCalls\b/.test('export function extractToolCalls(t: string) {}'),
+      'R34 复辟正控失配：这类定义本该被认出');
   });
 
   /* ---------------- R12：数据目录单源（M3）——禁止 env 直读复辟 ---------------- */

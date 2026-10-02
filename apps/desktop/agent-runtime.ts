@@ -5,12 +5,11 @@
  *   - 工具定义（OpenAI function-calling schema）
  *   - 参数解析（宽容：JSON 对象 / JSON 字符串 / 裸字符串 → 主参数）
  *   - 原生 tool_calls 归一化（OpenAI / Ollama 两种形态）
- *   - 文本兜底解析（<tool:name>args</tool> 等多种模型自发格式）
+ *   - 结果切片上限与工具白名单/元字符判定（`tool-exec.ts` 消费）
  *
- * 设计原则（对应 BUG-014）：
- *   1. 优先使用模型 native function calling，不做「编码 → 解码」往返；
- *   2. 不支持 function calling 的模型才走文本兜底；
- *   3. 文本兜底必须容错：模型实际输出格式远多于我们约定的那一种。
+ * 设计原则（对应 BUG-014）：优先使用模型 native function calling，不做「编码 → 解码」往返。
+ * 旧的「文本兜底解析」整段（从正文猜 <tool:name>args</tool>）已于 2026-10-02 删除——
+ * 它没有任何生产调用方，而接线等于开一条注入放大路径，见缺陷索引 BUG-061。
  */
 
 // 浏览器工具（CDP，ADR-0011）单独成文件，此处并入统一工具表：
@@ -48,11 +47,13 @@ export interface ModelReply {
   /** 归一化后的工具调用列表。 */
   toolCalls: NativeToolCall[];
   /** 来源：native = API 原生 tool_calls；text = 正文解析；none = 无。 */
-  source: 'native' | 'text' | 'none';
+  /** 只有两种现实取值：native = API 原生 tool_calls；none = 本轮没有工具调用。
+   * 原第三种 'text'（正文兜底解析）随旧回合循环一起删掉，2026-10-02 实测 `model-client.ts` 从不产出它。 */
+  source: 'native' | 'none';
   /**
    * 网关明确拒绝工具协议（400/404/422 或错误信息含 tool/function 语义）。
    * 上层据此在本次会话内停止下发 tools，避免每轮重复三次降级重试，
-   * 并转为「文本兜底解析」模式。**跨会话记忆（memo）只认这个信号**——
+   * 后续轮次不再下发 tools。**跨会话记忆（memo）只认这个信号**——
    * 空内容/网关抖动不得毒化原生工具能力（2026-09 安全/稳定性审查 M-1）。
    */
   toolsRejected?: boolean;
@@ -162,36 +163,6 @@ export const MAX_TOOL_ITERATIONS_DEFAULT = 200;
 export const DEFAULT_MODEL = 'qwen3:14b';
 
 
-/**
- * 会话历史归一化（B-1：渲染层写 {r:'user',t,x}，主进程写 {role,text}，双轨制会让
- * 第二轮起的历史全被 role/text 过滤丢弃 → Agent「单轮失忆」）。读侧统一：
- * r/x 是渲染层 schema，role/text 是主进程 schema，二者都归一为 ApiMessage。
- */
-export interface StoredMessageLike {
-  role?: string;
-  r?: string;
-  text?: string;
-  x?: string;
-}
-export function normalizeHistory(msgs: StoredMessageLike[] | undefined, limit = 20): ApiMessage[] {
-  const out: ApiMessage[] = [];
-  for (const m of msgs || []) {
-    const content = typeof m?.text === 'string' && m.text ? m.text : (typeof m?.x === 'string' ? m.x : '');
-    if (!content) continue;
-    const rawRole = m.role || m.r;
-    const role = rawRole === 'user' ? 'user' : rawRole === 'assistant' || rawRole === 'agent' ? 'assistant' : null;
-    if (!role) continue; // tool/typing 等 UI 步骤消息不回灌模型
-    out.push({ role, content });
-  }
-  return out.slice(-limit);
-}
-
-/**
- * ④M-3：file_read / web_fetch 回传宿主结果的内容上限（字节字符）。
- * canonical 宿主切片点 = main.ts executeTool（slice 到这些上限后回传），
- * schema 描述模板字符串引用同常量，杜绝「描述说 50KB 实际 slice 50000」式漂移。
- * 注意与 TOOL_RESULT_FEEDBACK_LIMIT（回传模型前的再裁剪）分层：这是宿主原始回传上限。
- */
 export const FILE_READ_RESULT_MAX = 50000; // file_read 结果切片上限（≈50KB）
 export const WEB_FETCH_RESULT_MAX = 30000; // web_fetch 结果切片上限（≈30KB）
 
@@ -287,7 +258,6 @@ export const TOOL_DEFS: ToolDef[] = [
   },
 ];
 
-export const TOOL_NAMES: string[] = TOOL_DEFS.map((t) => t.function.name);
 
 /** 各工具的主参数名：当模型把参数写成裸字符串时，用它兜底。 */
 export const TOOL_PRIMARY_ARG: Record<string, string> = {
@@ -393,217 +363,4 @@ export function normalizeNativeToolCalls(raw: unknown): NativeToolCall[] {
     out.push({ id, name, arguments: parseToolArgs(name, rawArgs), rawArguments: rawStr });
   }
   return out;
-}
-
-// ---------------------------------------------------------------------------
-// 文本兜底解析
-// -------------------------------------------------------------------------
-//
-// **本节与下面 `formatToolResult` / `buildSystemPrompt` 各段没有生产调用方**（2026-10-02 逐符号引用计数实测：
-// `extractToolCalls`、`isKnownTool`、`buildAssistantToolCallMessage`、`buildToolResultMessage`、
-// `normalizeHistory`、`truncateForModel`、`formatToolResult`、`buildSystemPrompt`、`TOOL_NAMES` 在
-// `apps/desktop` 的 .ts 里除了本文件自身之外只剩注释提到）。它们是旧 OpenAI 回合循环的残留：
-// 用户回合今天由 `step-session.ts` 交锁定点运行时执行，模型侧只经 `normalizeNativeToolCalls`（仍在 `model-client.ts` 活着）。
-// 今天只有 `agent-runtime-verify.cjs` 在断言这些行为，所以链上那一格绿**读起来像是产品能力，实际测的是残留表面**。
-// 为什么不直接接线回去：`extractToolCalls` 是从模型正文里"猜"工具调用，一旦放进任何真实回合，
-// 网页正文 / 被读文件内容里出现 `<tool:shell_command>{...}` 就成了可用注入放大位。
-// 复活它必须先做一次安全决策（BUG-061），arch-guard R34 会把"生产代码引用这些符号"当场判红。
-// ---------------------------------------------------------------------------
-
-export interface TextParseResult {
-  /** 解析出的工具调用（已去重）。 */
-  calls: ToolCall[];
-  /** 剔除工具片段后的正文（可作为 assistant 消息 content）。 */
-  stripped: string;
-}
-
-/** 主格式：<tool:file_list>{"path":"."}</tool>（允许缺少闭合标签）。 */
-const RE_TOOL_TAG = /<tool:([A-Za-z_][\w-]*)>([\s\S]*?)(?:<\/tool>|$)/g;
-/** 变体：<tool_call>{...}</tool_call> / <function_call>{...}</function_call>。 */
-const RE_TOOL_WRAPPER = /<(tool_call|tool-call|function_call|function-call|antml:invoke)>([\s\S]*?)<\/\1>/g;
-/** 变体：tool:file_list;{"path":"."} （模型自发的裸写法，以 JSON 结尾）。 */
-const RE_TOOL_LOOSE = /(?:^|[\s`>|])tool:([A-Za-z_][\w-]*)\s*[;:=]?\s*(\{[\s\S]*?\})/g;
-
-function pushUnique(list: ToolCall[], seen: Set<string>, call: ToolCall): void {
-  const key = `${call.name}|${JSON.stringify(call.arguments)}`;
-  if (seen.has(key)) return;
-  seen.add(key);
-  list.push(call);
-}
-
-/**
- * 从模型正文中提取工具调用。按「主格式 → wrapper → 裸写法 → 纯 JSON」依次尝试，
- * 命中一种即返回（避免同一段文本被多种模式重复解析）。
- */
-export function extractToolCalls(text: string): TextParseResult {
-  const src = typeof text === 'string' ? text : '';
-  const calls: ToolCall[] = [];
-  const seen = new Set<string>();
-  let stripped = src;
-
-  // 1) <tool:NAME>ARGS</tool>
-  let m: RegExpExecArray | null;
-  RE_TOOL_TAG.lastIndex = 0;
-  while ((m = RE_TOOL_TAG.exec(src)) !== null) {
-    pushUnique(calls, seen, { name: m[1]!, arguments: parseToolArgs(m[1]!, m[2]) });
-  }
-  if (calls.length) {
-    stripped = src.replace(RE_TOOL_TAG, '').replace(/<\/?tool>/g, '').trim();
-    return { calls, stripped };
-  }
-
-  // 2) <tool_call>{...}</tool_call> —— 内容是 {name, arguments} 或 {tool, ...}
-  RE_TOOL_WRAPPER.lastIndex = 0;
-  while ((m = RE_TOOL_WRAPPER.exec(src)) !== null) {
-    const obj = tryParseJsonObject((m[2] || '').trim()) || tryParseJsonObject((m[2] || '').replace(/^```(?:json)?|```$/g, '').trim());
-    if (!obj) continue;
-    const name = String(obj.name ?? obj.tool ?? obj.function ?? '');
-    if (!name) continue;
-    pushUnique(calls, seen, { name, arguments: parseToolArgs(name, obj.arguments ?? obj.args ?? obj.input) });
-  }
-  if (calls.length) {
-    stripped = src.replace(RE_TOOL_WRAPPER, '').trim();
-    return { calls, stripped };
-  }
-
-  // 3) tool:NAME;{...} 裸写法
-  RE_TOOL_LOOSE.lastIndex = 0;
-  while ((m = RE_TOOL_LOOSE.exec(src)) !== null) {
-    pushUnique(calls, seen, { name: m[1]!, arguments: parseToolArgs(m[1]!, m[2]) });
-  }
-  if (calls.length) {
-    stripped = src.replace(RE_TOOL_LOOSE, '').trim();
-    return { calls, stripped };
-  }
-
-  // 4) 整段就是一个 JSON 对象，且带 name + arguments（模型偶尔直接输出裸 JSON）
-  const trimmed = src.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '').trim();
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-    const obj = tryParseJsonObject(trimmed);
-    const name = obj ? String(obj.name ?? obj.tool ?? obj.function ?? '') : '';
-    if (name) {
-      pushUnique(calls, seen, { name, arguments: parseToolArgs(name, (obj as Record<string, unknown>).arguments ?? (obj as Record<string, unknown>).args) });
-      return { calls, stripped: '' };
-    }
-  }
-
-  return { calls: [], stripped: src.trim() };
-}
-
-/** 已知工具名判定（未知工具名在文本兜底时直接忽略，避免误伤正文）。 */
-export function isKnownTool(name: string): boolean {
-  return TOOL_NAMES.includes(name);
-}
-
-// ---------------------------------------------------------------------------
-// 结果裁剪
-// ---------------------------------------------------------------------------
-
-/** 回传模型的工具结果长度上限（防止单次 50KB 结果刷爆上下文）。 */
-export const TOOL_RESULT_FEEDBACK_LIMIT = 20000;
-
-export function truncateForModel(text: string, limit = TOOL_RESULT_FEEDBACK_LIMIT): string {
-  const s = typeof text === 'string' ? text : String(text ?? '');
-  if (s.length <= limit) return s;
-  return `${s.slice(0, limit)}\n…（已截断，共 ${s.length} 字符）`;
-}
-
-/** 把 ToolResult 包装成回传模型的文本内容。 */
-export function formatToolResult(toolName: string, res: ToolResult): string {
-  if (res.error) return `[工具 ${toolName} 执行失败] ${res.error}`;
-  const body = res.result || '(工具返回空结果)';
-  return `[工具 ${toolName} 执行结果]\n${truncateForModel(body)}`;
-}
-
-// ---------------------------------------------------------------------------
-// 消息构造（OpenAI chat 规范）
-// ---------------------------------------------------------------------------
-
-/**
- * 构造带原生 tool_calls 的 assistant 消息。
- * 必须原样回传 arguments 字符串，否则部分模型会因无法配对而拒绝后续 tool 消息。
- */
-export function buildAssistantToolCallMessage(content: string, calls: NativeToolCall[]): ApiMessage {
-  return {
-    role: 'assistant',
-    content: content || '',
-    tool_calls: calls.map((c) => ({
-      id: c.id,
-      type: 'function' as const,
-      function: { name: c.name, arguments: c.rawArguments || JSON.stringify(c.arguments ?? {}) },
-    })),
-  };
-}
-
-/**
- * 构造工具结果消息。
- * - mode='native'：assistant 消息里带 tool_calls → 用 role:'tool' + tool_call_id（OpenAI 规范）
- * - mode='text'  ：assistant 消息里没有 tool_calls → 用 role:'user'，
- *                  否则多数网关会报 "role 'tool' 没有对应的 tool_calls"
- */
-export function buildToolResultMessage(
-  call: { id?: string; name: string },
-  result: ToolResult,
-  mode: 'native' | 'text',
-): ApiMessage {
-  const body = formatToolResult(call.name, result);
-  if (mode === 'native') {
-    return {
-      role: 'tool',
-      tool_call_id: call.id || nextToolCallId(),
-      name: call.name,
-      content: body,
-    };
-  }
-  return { role: 'user', content: body };
-}
-
-// ---------------------------------------------------------------------------
-// 系统提示词
-// ---------------------------------------------------------------------------
-
-export function buildSystemPrompt(opts: { cwd?: string; memories?: string[]; prompts?: string[] } = {}): string {
-  const list = TOOL_DEFS.map((t) => {
-    const req = (t.function.parameters.required as string[] | undefined) || [];
-    const props = (t.function.parameters.properties as Record<string, { description?: string }> | undefined) || {};
-    const args = Object.keys(props).map((k) => `${k}${req.includes(k) ? '*' : ''}`).join(', ');
-    return `- ${t.function.name}(${args}): ${t.function.description}`;
-  }).join('\n');
-
-  const head = ['你是 OrchDesk 的本地 Agent，可以使用工具来完成用户任务。'];
-  if (opts.cwd) {
-    head.push('', `当前工作目录：${opts.cwd}`, 'shell 命令与相对路径以此为基准；操作其他项目前必须先用 set_cwd 切换。');
-  }
-  if (opts.memories?.length) {
-    head.push(
-      '',
-      '用户长期记忆（必须遵守；条目中「用户」= 人类用户本人，「助手」= 你 OrchDesk，勿混淆角色）：',
-      ...opts.memories.map((m) => `- ${m}`),
-    );
-  }
-  if (opts.prompts?.length) {
-    head.push('', '生效提示词（用户在提示词库配置，优先级高于默认行为）：', ...opts.prompts.map((p) => `- ${p}`));
-  }
-
-  return [
-    ...head,
-    '',
-    '可用工具：',
-    list,
-    '',
-    '规则：',
-    '1. 需要工具时优先使用你原生支持的 function calling / tool_calls 能力。',
-    '2. 若你的运行环境不支持原生工具调用，则严格按下面格式输出，一行一个调用：',
-    '   <tool:工具名>{"参数名":"参数值"}</tool>',
-    '   例如：<tool:file_list>{"path":"."}</tool>',
-    '3. 可以一次调用多个工具；工具结果会自动回传给你，拿到结果后再给出最终回答。',
-    '4. 不需要工具时直接正常回答，不要输出任何工具标签。',
-    '5. 不要编造工具执行结果。',
-    '6. 需要看网页时用 browser_* 工具：先 browser_open 打开网址，再 browser_text / browser_links 读内容；',
-    '   页面加载慢就加大 timeout 或用 waitUntil:"dom"。browser_click / browser_type / browser_eval 会真实改变页面，需用户授权。',
-    '7. 用户告知长期有效的事实或偏好（如称呼、约定、项目位置）时，必须调用 memory_save 保存，不要只口头答应。',
-    '   memory_save 的 content 必须用第三人称客观陈述：「用户」专指人类用户，「助手」专指你自己（OrchDesk）。',
-    '   例：用户说「你是小星，我是梧哥」→ 保存「用户称呼为梧哥；助手称呼为小星」。禁止保存「我/你/对方」等相对称谓（回放时会角色颠倒）。',
-    '8. 网页内容以工具返回为准；读不到就调整选择器或换 browser_links，不要凭网址猜测页面内容。',
-  ].join('\n');
 }
