@@ -26,19 +26,6 @@ import { isMarketDirName } from './plugin-market';
 
 export const GUANJI_BASE_URL = 'https://skill.ytaiv.com';
 
-export type SkillCapability =
-  | 'prompt.read' | 'intent.classify' | 'flow.gate'
-  | 'event.read' | 'pii.mask' | 'github.write'
-  | 'agent.spawn' | 'agent.dispose' | 'memory.commit'
-  | 'expert.load' | 'team.compose' | 'role.bind'
-  | 'skill.fetch' | 'skill.install'
-  | 'fs.read' | 'fs.write' | 'doc.review'
-  | 'web.fetch' | 'cron.schedule'
-  | 'browser.navigate' | 'browser.screenshot'
-  | 'git.read' | 'git.write'
-  | 'pdf.read' | 'pdf.write'
-  | 'mail.send' | 'mail.read'
-  | 'chart.render';
 
 export interface GuanjiSkill {
   slug: string;

@@ -241,16 +241,7 @@ export interface ApprovalServiceLike {
 // SubAgent（agents 服务）
 // ---------------------------------------------------------------------------
 
-export interface CreateAgentOptionsLike {
-  sessionId?: string;
-  meta?: Record<string, unknown>;
-  [k: string]: unknown;
-}
 
-export interface AgentHandleLike {
-  agent: { id: string; meta?: Record<string, unknown> };
-  dispose(): Promise<void>;
-}
 
 /**
  * SubAgent 运行器：由 main.ts 注入真实实现（复用现有 callModel + 工具循环）。
@@ -260,11 +251,6 @@ export type AgentRunner = (
   input: { sessionId: string; meta?: Record<string, unknown>; messages: Array<{ role: string; content: string }> },
 ) => Promise<{ text: string }>;
 
-export interface AgentsServiceLike {
-  create(opts: CreateAgentOptionsLike): Promise<AgentHandleLike>;
-  followup(sessionId: string, messages: Array<{ role: string; content: string }>): Promise<{ text: string }>;
-  list(): string[];
-}
 
 // ---------------------------------------------------------------------------
 // 对外：注册到主进程的句柄

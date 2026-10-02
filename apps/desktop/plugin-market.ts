@@ -28,8 +28,6 @@ export type ManifestCheck =
   | { ok: true; manifest: MarketManifest }
   | { ok: false; error: string };
 
-/** market 插件目录名（挂在 dataDir() 下）。 */
-export const MARKET_DIR_NAME = 'plugins';
 
 /** manifest 字段上限：防一个 10 MB 的 description 把设置页卡死。 */
 export const MANIFEST_FIELD_MAX = 200;

@@ -44,7 +44,6 @@ export interface PromotionEntry {
   actor: 'user' | 'auto';
 }
 
-export const PROMOTION_FILE_NAME = 'memory-promotions.json';
 
 /** 环形缓冲上限：超出后淘汰最旧条目。 */
 export const PROMOTION_LOG_MAX = 200;

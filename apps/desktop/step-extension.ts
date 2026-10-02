@@ -103,9 +103,6 @@ export interface StepLoadDeps {
 let current: ComposedStepExtension | null = null;
 let toolHookBound = false;
 
-export function stepToolHookBound(): boolean {
-  return toolHookBound;
-}
 
 export function currentStepExtension(): ComposedStepExtension | null {
   return current;

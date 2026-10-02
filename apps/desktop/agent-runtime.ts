@@ -159,21 +159,6 @@ export const MAX_TOOL_ITERATIONS_DEFAULT = 200;
  */
 export const DEFAULT_MODEL = 'qwen3:14b';
 
-/**
- * 模型选择单源（R1-8：原 6 处硬编码 'qwen3:14b' 收敛）。
- * 命中顺序：requested（用户显式选择，须在 provider.models 内）→ provider.models[0]
- *           → cfg.defaultModel → DEFAULT_MODEL。
- * 注意 DEFAULT_MODEL 是「一个模型都没配」时的兜底，不是产品推荐位。
- */
-export function pickModel(
-  provider: { models?: string[] } | undefined | null,
-  cfg: { defaultModel?: string } | undefined | null,
-  requested?: string | undefined | null,
-): string {
-  const available = provider?.models || [];
-  if (requested && available.includes(requested)) return requested;
-  return available[0] || cfg?.defaultModel || DEFAULT_MODEL;
-}
 
 /**
  * 会话历史归一化（B-1：渲染层写 {r:'user',t,x}，主进程写 {role,text}，双轨制会让

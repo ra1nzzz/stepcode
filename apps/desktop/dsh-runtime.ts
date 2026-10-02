@@ -13,13 +13,7 @@ export const PLUGIN_NAMES = [
   'intent', 'trace', 'authz', 'brain', 'multi', 'memory', 'prompt', 'compensation', 'evolution',
 ] as const;
 
-export type PluginName = (typeof PLUGIN_NAMES)[number];
 
-export interface PluginLoadResult {
-  name: string;
-  ok: boolean;
-  error?: string;
-}
 
 export interface PluginState {
   name: string;
@@ -78,9 +72,6 @@ export interface MarketPluginInfo {
   active: false;
 }
 
-export function listMarketPlugins(): MarketPluginInfo[] {
-  return [];
-}
 
 export async function setMarketPluginEnabled(dir: string): Promise<MarketPluginInfo> {
   return {
@@ -102,9 +93,6 @@ export async function startupMarketPlugins(
     .map(([dir]) => ({ dir, ok: false, error: DSH_UNLOAD_REASON }));
 }
 
-export async function firePreStep(_input?: unknown): Promise<null> {
-  return null;
-}
 
 export async function stopRuntime(): Promise<void> {}
 
@@ -112,18 +100,10 @@ export function persistGrantsNow(): boolean {
   return false;
 }
 
-export function persistMemoryNow(): void {}
 
-export function hydrateMemory(): boolean {
-  return false;
-}
 
 export function hydrateGrants(): number {
   return 0;
 }
 
-export const TRACE_REPO_URL = '';
 
-export function buildTraceConfig(): Record<string, unknown> {
-  return { repoUrl: '', token: '', maskEnabled: true, disabled: true, reason: DSH_UNLOAD_REASON };
-}

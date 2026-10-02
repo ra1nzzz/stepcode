@@ -43,7 +43,6 @@ export interface SandboxLogEntry {
   sessionId?: string;
 }
 
-export const SANDBOX_FILE_NAME = 'sandbox-log.json';
 
 /** 环形缓冲上限：超出后淘汰最旧条目。 */
 export const SANDBOX_LOG_MAX = 500;

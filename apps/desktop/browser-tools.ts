@@ -560,9 +560,3 @@ export function describeBrowserState(st: BrowserStateSnapshot): string {
   return parts.join('\n');
 }
 
-/** 工具结果摘要（步骤条 / 通知用，比完整结果短）。 */
-export function summarizeBrowserResult(name: string, result: string): string {
-  const one = String(result || '').replace(/\s+/g, ' ').trim();
-  if (!one) return `${name} 完成`;
-  return one.length <= 120 ? one : `${one.slice(0, 120)}…`;
-}
