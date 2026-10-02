@@ -212,8 +212,12 @@ const RULES = [
     id: 'R5',
     desc: '源码禁硬编码本机绝对路径与密钥形态',
     files: () => hostSourceFiles().map((abs) => ({ name: path.basename(abs), abs })),
+    // 反斜杠之外也要挡正斜杠：`C:/Users/...` 过去完全放行，而 e2e 套件里那句
+    // `C:/Users/my/AppData/Local/Temp/...` 就是走这条缝过去的。
+    // 扫描面刻意不扩到验证脚本：那些脚本本来就得出喂假 home（`C:/Users/t`）这类
+    // 形状参数，实测 7 命中里 6 条是夹具。真正的危害形态由 R20 守。
     forbid: [
-      /[A-Za-z]:\\+Users\\+/i,
+      /[A-Za-z]:[\\/]+Users[\\/]+/i,
       /\/home\/[a-z][a-z0-9_-]*\//,
       /\bghp_[A-Za-z0-9]{20,}\b/,
       /\bsk-[A-Za-z0-9]{20,}\b/,
@@ -409,6 +413,79 @@ function scanRule(rule, code, fileName) {
     }
   });
 
+
+  /* ---------------- R20：验证套件的 I/O 目标不得是硬编码盘符路径 ---------------- */
+
+  await check('R20 验证套件不得把产物写进仓库外的绝对路径（带正控与反例）', () => {
+    // 危害形态不是「出现一个像路径的字符串」，而是「把它当写入目标」。
+    // e2e 里那句 `page.screenshot({ path: 'C:/Users/my/AppData/Local/Temp/…' })`
+    // 让每一次 `pnpm run verify` 都往别人机器的家目录写一张全屏截图——
+    // Playwright 顺手建父目录，所以在本机一直静默成功，从没进过任何断言。
+    // 而 `home: 'C:/Users/t'` 这类是喂给纯函数的入参，不该判违规（R5 扩面时
+    // 7 命中里 6 条就是它），所以本规则只盯 sink。
+    const sinks = [
+      /\bscreenshot\s*\(\s*\{[^}]*path\s*:\s*['"][A-Za-z]:[\\/]/,
+      /\bwriteFileSync\s*\(\s*['"][A-Za-z]:[\\/]/,
+      /\bappendFileSync\s*\(\s*['"][A-Za-z]:[\\/]/,
+      /\bmkdirSync\s*\(\s*['"][A-Za-z]:[\\/]/,
+      /\bcpSync\s*\(\s*['"][A-Za-z]:[\\/]+Users/,
+    ];
+    // 正控：明知坏的那句必须被同一组正则抓到，否则规则只是在扫空集。
+    assert(
+      sinks.some((re) => re.test("await page.screenshot({ path: 'C:/Users/x/AppData/Local/Temp/s.png', fullPage: true });")),
+      'R20 正控 1 失配（screenshot 目标）',
+    );
+    assert(
+      sinks.some((re) => re.test("fs.writeFileSync('D:/Users/x/a.json', s);")),
+      'R20 正控 2 失配（writeFileSync 目标）',
+    );
+    // 反例：夹具入参与仓库内相对路径不得被判违规。
+    assert(
+      !sinks.some((re) => re.test("const r = CD.discoverConnector('github', { home: 'C:/Users/t', existsSync });")),
+      'R20 误把夹具入参当写入目标',
+    );
+    assert(!sinks.some((re) => re.test("fs.writeFileSync('out/result.json', s);")), 'R20 误判仓库内相对路径');
+
+    const files = [
+      // arch-guard 自己不在扫描面内：它的正样本就是坏字符串，扫它会自hit。
+      ...fs.readdirSync(APP_DIR).filter((f) => /-verify\.(cjs|mjs)$/.test(f) && f !== 'arch-guard-verify.cjs')
+        .map((f) => path.join(APP_DIR, f)),
+      path.join(APP_DIR, 'scripts', 'e2e-kit.cjs'),
+    ];
+    const offenders = [];
+    for (const abs of files) {
+      stripComments(read(abs)).split(/\r?\n/).forEach((line, i) => {
+        if (sinks.some((re) => re.test(line))) {
+          offenders.push(`${path.basename(abs)}:${i + 1}  ${line.trim().slice(0, 110)}`);
+        }
+      });
+    }
+    assert(offenders.length === 0, `以下位置把产物写到仓库外的绝对路径：\n${offenders.join('\n')}`);
+  });
+
+  // ---------------- R21：渲染层模板串里不得出现裸 JSX 注释 ----------------
+  // 注意别在块注释里写星号斜杠的闭合形态：那会提前结束本条注释，把后面的字变成代码。
+
+  await check('R21 渲染层模板串内的裸 JSX 注释会被当正文渲染（实测泄漏进作曲栏）', () => {
+    // `renderer/app.js` 不是 JSX。写 `{/* 说明 */}` 只有两种下场：
+    //   · 落在模板串里 → 整段文字成为用户可见内容（R2-6 那条就出现在作曲栏上方，
+    //     截图实测可见；R5-03 那条在提示词编辑弹窗里，同一形态）
+    //   · 写成 `${/* 说明 */''}` → 合法（注释在表达式内），不判违规
+    // 判据因此是「前面不是 $ 的 {/星」，而不是「出现 {/星」。
+    const bare = /(^|[^$])\{\/\*/;
+    // 正控：坏形态必须被抓到。
+    assert(bare.test('      {/* R2-6：说明 */}'), 'R21 正控失配（裸 JSX 注释）');
+    // 反例：合法形态不得被判违规。
+    assert(!bare.test("          ${/* P4-S2-11：说明 */''}"), 'R21 误判 ${/* … */} 合法写法');
+    const leaks = [];
+    for (const f of rendererFiles()) {
+      const src = read(f.abs);
+      src.split(/\r?\n/).forEach((line, i) => {
+        if (bare.test(line)) leaks.push(`${f.name}:${i + 1}  ${line.trim().slice(0, 100)}`);
+      });
+    }
+    assert(leaks.length === 0, `以下位置会把注释当正文渲染给用户：\n${leaks.join('\n')}`);
+  });
 
   /* ---------------- R12：数据目录单源（M3）——禁止 env 直读复辟 ---------------- */
 

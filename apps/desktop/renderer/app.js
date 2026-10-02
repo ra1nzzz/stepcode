@@ -1283,9 +1283,11 @@
   function renderComposer(s) {
     const intentCtl = intentCtlState();
     renderTrayHint();
+    // R2-6：expert 名来自编排插件目录（外部数据），直插 placeholder 属性未转义——
+    // 含 " 会撑破属性、其余内容泄流成杂散属性。同文件另两处消费 s.expert 都走了 esc()。
+    // 这条注释原先写成 JSX 的花括号注释形态：本文件是普通 JS 模板串，不是 JSX，
+    // 于是整段文字被当内容渲染进作曲栏上方（实测截图可见）。
     return `<div class="composer"><div class="box">
-      {/* R2-6：expert 名来自编排插件目录（外部数据），直插 placeholder 属性未转义——
-          含 " 会撑破属性、其余内容泄流成杂散属性。同文件另两处消费 s.expert 都走了 esc()。 */}
       <textarea id="composer" placeholder="向 ${esc(s.expert)} 发消息…${intentCtl.placeholderSuffix}"></textarea>
       <div id="outboundWarn" class="outbound-warn" hidden></div>
       ${composerBarHTML('send')}
@@ -4043,12 +4045,13 @@
     const category = isEdit ? doc.category : 'role';
     const body = isEdit ? doc.body : '';
     const agents = isEdit ? (doc.agents || []).join(', ') : '';
+    // R5-03：三个回显值统一走 esc()。原来 title 只转义 "、body 只转义 <、
+    // agents 完全没转义——agents 是用户自由输入，含 " 即打断属性，可注入
+    // onfocus 之类事件属性。同一函数里三种口径且都不完整。
+    // （本条原先也写成那种花括号注释形态，落在模板串里会被当正文渲染进弹窗。）
     openModal(`<div class="mh">${ic('at', 18)}<b>${isEdit ? '编辑提示词' : '新建提示词'}</b></div>
       <div class="mb">
         <div class="faint" style="margin-bottom:8px">提示词与技能解耦；可在正文中使用 <span class="mono">{'{skill:xxx}'}</span> 引用技能（运行时展开）。</div>
-        {/* R5-03：三个回显值统一走 esc()。原来 title 只转义 "、body 只转义 <、
-            agents 完全没转义——agents 是用户自由输入，含 " 即打断属性，可注入
-            onfocus 之类事件属性。同一函数里三种口径且都不完整。 */}
         <div class="mb-row"><label>标题</label><input id="pmTitle" class="inp" value="${esc(title)}" placeholder="如：默认角色设定"></div>
         <div class="mb-row"><label>分类</label><select id="pmCat" class="inp">
           ${PROMPT_CATS.map((c) => `<option value="${c}" ${c === category ? 'selected' : ''}>${PROMPT_CAT_LABELS[c]}</option>`).join('')}

@@ -758,8 +758,17 @@ async function run() {
   }
   await assert(userCount >= 1, '用户消息已出现在 DOM 中（count=' + userCount + ')');
 
-  // Take a screenshot for debugging
-  await page.screenshot({ path: 'C:/Users/my/AppData/Local/Temp/e2e-test/screenshot1.png', fullPage: true });
+  // 调试用截图：写在本机的临时目录里，且默认关掉。
+  // 原来这里硬写 `C:/Users/my/AppData/Local/Temp/e2e-test/screenshot1.png`
+  // ——别人机器的家目录，且每次跑 verify 都会写出去（Playwright 顺手建父目录，
+  // 所以在本机一路静默成功）。要留图就显式设 ORCHDESK_E2E_SHOTS=<目录>。
+  const shotDir = process.env.ORCHDESK_E2E_SHOTS || '';
+  if (shotDir) {
+    const fsx = require('node:fs');
+    const pth = require('node:path');
+    fsx.mkdirSync(shotDir, { recursive: true });
+    await page.screenshot({ path: pth.join(shotDir, 'screenshot1.png'), fullPage: true });
+  }
 
   // 验证：消息包含预期文本 — 通过 JS 直接获取
   const firstUserMsgText = await page.evaluate(() => {
