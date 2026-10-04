@@ -70,8 +70,8 @@ import { isAbsoluteLike, isProviderBaseUrlAllowed } from './common-tools';
 import { callModel as callModelHttp, initModelClient } from './model-client';
 import { initModelCatalog, refreshCatalogInBackground, getCatalogPresets, listAvailableModels } from './model-catalog';
 import { abortStepSession, hasActiveStepTurn, resetStepSessionCache, runStepSessionTurn, type StepSessionHost, type StepUiContext } from './step-session';
-import { abortCliTurn, cliCoreDisabled, findOfficialCli, hasActiveCliTurn, runCliCoreTurn } from './cli-process';
-import { executeTool, initToolExec, sessionCwd, setSessionCwd } from './tool-exec';
+import { abortCliTurn, cliCoreDisabled, findOfficialCli, hasActiveCliTurn, readCliVersion, runCliCoreTurn } from './cli-process';
+import { clearSessionCwd, executeTool, initToolExec, sessionCwd, setSessionCwd } from './tool-exec';
 import { registerBrowserIpc } from './ipc-browser';
 import { preloadTerminalPty, registerTerminalIpc } from './ipc-terminal';
 import { closeAllTerminals } from './terminal-pty';
@@ -805,7 +805,12 @@ ipcMain.handle('orchdesk:abort-agent-turn', async (_e, sessionId: string) => {
 
 // ---- R5-01：本地版本源（状态栏显示用，不再向上游仓库要 commit） ----
 ipcMain.handle('orchdesk:app-version', async () => {
-  return { version: typeof app.getVersion === 'function' ? app.getVersion() : '' };
+  const cli = cliCoreDisabled() ? null : findOfficialCli();
+  return {
+    version: typeof app.getVersion === 'function' ? app.getVersion() : '',
+    cliVersion: cli ? readCliVersion(cli) : '',
+    cliMissing: !cli,
+  };
 });
 
 // ---- FR-5 模型管理桥接 ----
@@ -1172,7 +1177,11 @@ ipcMain.handle('orchdesk:set-session-cwd', async (_e, sessionId: unknown, dir: u
   const sid = typeof sessionId === 'string' ? sessionId.trim() : '';
   const raw = typeof dir === 'string' ? dir.trim() : '';
   if (!sid) return { ok: false, reason: '缺少会话 ID' };
-  if (!raw || !isAbsoluteLike(raw)) return { ok: false, reason: '需要绝对路径的项目目录' };
+  if (!raw) {
+    clearSessionCwd(sid);
+    return { ok: true, cleared: true };
+  }
+  if (!isAbsoluteLike(raw)) return { ok: false, reason: '需要绝对路径的项目目录' };
   const resolved = path.resolve(raw);
   let isDir = false;
   try { isDir = fs.statSync(resolved).isDirectory(); } catch { /* 不存在 */ }

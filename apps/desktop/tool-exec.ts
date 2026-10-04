@@ -193,6 +193,10 @@ export function setSessionCwd(sessionId: string, dir: string): void {
   sessionCwds.set(sessionId, dir);
 }
 
+export function clearSessionCwd(sessionId: string): void {
+  sessionCwds.delete(sessionId);
+}
+
 
 export function sessionCwd(sessionId?: string): string {
   const set = sessionId ? sessionCwds.get(sessionId) : undefined;

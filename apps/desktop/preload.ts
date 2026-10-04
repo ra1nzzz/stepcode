@@ -610,8 +610,8 @@ const orchdesk = {
   /** 测试模型连通性。 */
   testModel: (providerId: string, model: string): Promise<{ ok: boolean; latencyMs?: number; error?: string }> =>
     ipcRenderer.invoke('orchdesk:models-test', providerId, model),
-  /** R5-01：本地应用版本（状态栏显示「OrchDesk Core · v<x>」；不再向上游仓库要 commit）。 */
-  getAppVersion: (): Promise<{ version: string }> =>
+  /** 本地桌面壳版本和已安装官方 CLI 版本。不访问网络。 */
+  getAppVersion: (): Promise<{ version: string; cliVersion?: string; cliMissing?: boolean }> =>
     ipcRenderer.invoke('orchdesk:app-version'),
   /** models.dev 目录预设（添加提供商表单的“预设”可搜索下拉数据源；缓存 TTL 24h）。 */
   getModelCatalog: (): Promise<{ ok: boolean; providers: Array<{ id: string; name: string; api?: string; modelCount: number }>; reason?: string }> =>

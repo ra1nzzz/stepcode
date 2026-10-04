@@ -112,7 +112,7 @@
   // 界面只有两档。机器标识是 bypass / autopilot。宿主带回的其它 id 或文案不得显示成第三档。
   const FALLBACK_AUTH_MODES = [
     { id: 'bypass', label: '默认模式', blurb: '普通工具直接运行。危险命令仍由本界面确认。' },
-    { id: 'autopilot', label: '完全信任', blurb: '普通工具直接运行，并在模型短暂失败后续跑。危险命令仍由本界面确认。' },
+    { id: 'autopilot', label: '完全信任', blurb: '普通工具直接运行，并在模型短暂失败后续跑。确认弹窗默认允许。' },
   ];
   const GUI_PRESET_LABELS = { bypass: '默认模式', autopilot: '完全信任' };
   const authModesForRender = () => FALLBACK_AUTH_MODES.map((m) => ({ ...m }));
@@ -1109,6 +1109,7 @@
         <div class="proj-head" data-action="proj-toggle" data-id="${p.id}">
           <span class="pf ${expanded ? 'open' : ''}">${ic('chev', 12)}</span>
           ${p.path ? '<span class="pf-open" style="color:var(--fg-faint);font-size:12px" title="有本地文件夹">' + ic('folderOpen', 14) + '</span>' : '<span class="pf-open" style="color:var(--fg-faint);font-size:12px" title="无文件夹绑定">' + ic('folder', 14) + '</span>'}
+          ${p.path ? `<button type="button" class="unbind" data-action="unbind-dir" data-kind="project" data-id="${esc(p.id)}" title="不再在此目录工作" aria-label="不再在此目录工作">×</button>` : ''}
           <span class="pn">${esc(p.n)}</span>
           <span class="pm" style="display:flex;gap:1px;align-items:center">
             <button class="opbtn" data-action="proj-menu" data-id="${p.id}" title="项目操作">···</button>
@@ -1245,11 +1246,12 @@
     const bound = s ? (projectPathOf(s.id) || String(s.cwd || '').trim()) : '';
     const dir = bound || String(state.workspaceDir || '').trim();
     const label = dir ? dirBase(dir) : '设置工作目录';
-    return `<button type="button" class="ws-chip" data-action="ws-pick" title="${esc(dir || '设置工作目录')}">
+    const unbind = dir ? `<button type="button" class="unbind" data-action="unbind-dir" data-kind="chip" title="不再在此目录工作" aria-label="不再在此目录工作">×</button>` : '';
+    return `<span class="ws-chip">${unbind}<button type="button" class="ws-pick" data-action="ws-pick" title="${esc(dir || '设置工作目录')}">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       <span>${esc(label)}</span>
       <span class="ws-change">更改</span>
-    </button>`;
+    </button></span>`;
   }
 
   function composerBarHTML(sendAction) {
@@ -1481,7 +1483,7 @@
     }[kind] || 'info');
     const labelOf = (kind) => (FORK.REPLAY_KIND_LABELS[kind] || kind);
     return `<div style="flex:1;overflow-y:auto" id="msgScroll">
-      <div style="max-width:760px;margin:0 auto;padding:18px 16px 10px">
+      <div class="thread">
         <div class="row" style="justify-content:space-between;margin-bottom:10px">
           <div class="row"><b style="font-size:16px">回放 · ${esc(s.title)}</b><span class="badge info">只读</span></div>
           <div class="row" style="gap:8px">
@@ -1537,7 +1539,7 @@
       const msgHtml = buildMsgListHtml(s);
 
       return `<div style="flex:1;overflow-y:auto" id="msgScroll">
-        <div style="max-width:760px;margin:0 auto;padding:18px 16px 10px">
+        <div class="thread">
           ${renderTurnStrip(s)}
           ${renderMemoryLine()}
           <div class="row" style="justify-content:space-between;margin-bottom:4px">
@@ -2211,7 +2213,7 @@
           <div class="row" style="margin-bottom:10px">
             <span class="badge ok">沙箱（应用层路径与命令策略）</span>${state.authLevels.length ? '<span class="badge info">L0-L4 分级</span>' : '<span class="badge">L0-L4 分级未接入</span>'}<span class="faint">fail-closed</span>
           </div>
-          <div class="faint" style="margin-bottom:8px">授权模式只有默认模式和完全信任。危险命令仍由本界面确认。</div>
+          <div class="faint" style="margin-bottom:8px">授权模式只有默认模式和完全信任。默认模式仍确认危险命令；完全信任下弹窗默认允许。</div>
           <div class="auth-modes">
             ${authModesForRender().map((m) => `<div class="am ${state.authMode === m.id ? 'sel' : ''}" data-action="auth-mode-pick" data-id="${m.id}">
               <div class="am-h"><b>${m.label}</b>${state.authMode === m.id ? '<span class="badge ok">当前</span>' : ''}</div>
@@ -2706,6 +2708,10 @@
     // 焦点还给触发元素。此前模态对键盘用户是陷阱——无初始焦点、不能 ESC 关。
     const modal = $('#modalRoot').querySelector('.modal');
     if (!modal) return;
+    if (state.authMode === 'autopilot') {
+      const allow = modal.querySelector('.mf .btn.danger');
+      if (allow) queueMicrotask(() => { if (allow.isConnected) allow.click(); });
+    }
     const focusables = () => [...modal.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')];
     const first = focusables()[0];
     if (first) first.focus();
@@ -3150,7 +3156,7 @@
         <div>${targetSpec ? targetSpec.blurb : ''}</div>
         ${loosening ? `<div class="warn-list" style="margin-top:10px">
           <div>· 完全信任会在模型短暂失败后续跑</div>
-          <div>· 危险命令仍由本界面确认，不会改成自动放行</div>
+          <div>· 完全信任下确认弹窗默认允许，包括危险命令</div>
           <div>· 只对本次运行生效，重启回到默认模式</div>
         </div>` : ''}
       </div>
@@ -3162,7 +3168,7 @@
   function openAuthPicker() {
     openModal(`<div class="mh">${ic('shield', 18)}<b>选择授权模式</b></div>
       <div class="mb">
-        <div class="faint" style="margin-bottom:10px">只有默认模式和完全信任。危险命令仍由本界面确认。</div>
+        <div class="faint" style="margin-bottom:10px">只有默认模式和完全信任。完全信任下弹窗默认允许。</div>
         ${authModesForRender().map((m) => `<div class="row" style="padding:9px 10px;border:1px solid ${state.authMode === m.id ? 'var(--accent)' : 'var(--border)'};border-radius:8px;margin-bottom:7px;cursor:pointer" data-action="auth-mode-pick" data-id="${m.id}">
           <div style="flex:1"><b>${m.label}</b>${state.authMode === m.id ? ' <span class="badge ok">当前</span>' : ''}<div class="faint" style="font-size:11px;margin-top:3px">${m.blurb}</div></div>
           ${state.authMode === m.id ? '' : '<button class="btn sm">选择</button>'}
@@ -3261,10 +3267,11 @@
     if (!host) return;
     const b = state.browser;
     const t = state.terminal;
-    if (host.childElementCount !== 3) {
+    if (host.childElementCount !== 4) {
       host.innerHTML = `<button class="sb-icon" data-action="file-panel" id="fileBtn" title="文件"></button>`
         + `<button class="sb-icon" data-action="browser-panel" id="browserBtn"></button>`
-        + `<button class="sb-icon" data-action="terminal-panel" id="terminalBtn"></button>`;
+        + `<button class="sb-icon" data-action="terminal-panel" id="terminalBtn"></button>`
+        + `<button class="sb-text" data-action="check-updates" id="sbUpdate" title="检查桌面壳和官方 CLI，并可一键更新">检查更新</button>`;
     }
     const fBtn = $('#fileBtn');
     if (fBtn) {
@@ -4156,6 +4163,10 @@
   /* ---------- 审批弹窗（T-P3-2 fail-closed） ---------- */
   // 主进程经 orchdesk:authz-approval-request 转发 Step 审批 → 渲染层弹窗 → 用户决定 → submitDecision。
   function showApprovalModal(req) {
+    if (state.authMode === 'autopilot') {
+      bridge.submitDecision(req.id, 'allowed-once');
+      return;
+    }
     // PRD FR-9 授权粒度：单次 / 会话 / 永久。后两者需要「具体目标」才能建白名单规则
     // （拿不到目标就只能建 '*' 规则，等于对该工具全放行 —— 不提供这个选项）。
     const target = String(req.target || '').trim();
@@ -4472,6 +4483,7 @@ let outboundTimer = null;
    * 判定本身失败不拦路——补偿层在后端仍会 fail-closed，这里不做双重否决。
    */
   function confirmOutboundIfNeeded(text) {
+    if (state.authMode === 'autopilot') return Promise.resolve(true);
     return Promise.resolve(bridge.withhold(text || '')).then((w) => {
       if (w && w.needsConfirm && !outboundConfirmed) {
         outboundConfirmed = true;
@@ -4912,7 +4924,11 @@ let outboundTimer = null;
     try {
       const el = $('#statusText');
       const v = typeof bridge.getAppVersion === 'function' ? await bridge.getAppVersion() : null;
-      if (el && v && v.version) el.textContent = 'StepCode Desktop · v' + v.version;
+      if (el && v) {
+        const desk = v.version ? (' · v' + v.version) : '';
+        const core = v.cliMissing ? '未安装' : (v.cliVersion || '未知');
+        el.textContent = 'StepCode Desktop' + desk + '（Core:stepcode cli ' + core + '）';
+      }
     } catch { /* 拿不到本地版本就保持初值，不编造 */ }
     console.log('[init] done');
   }

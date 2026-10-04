@@ -7,7 +7,7 @@
  */
 const AUTH_MODES_STUB = [
   { id: 'bypass', label: '默认模式', blurb: '普通工具直接运行。危险命令仍由本界面确认。' },
-  { id: 'autopilot', label: '完全信任', blurb: '普通工具直接运行，并在模型短暂失败后续跑。危险命令仍由本界面确认。' },
+  { id: 'autopilot', label: '完全信任', blurb: '普通工具直接运行，并在模型短暂失败后续跑。确认弹窗默认允许。' },
 ];
 window.orchdeskBridgeStub = {
       loadSessions: () => Promise.resolve([]),
@@ -106,5 +106,5 @@ window.orchdeskBridgeStub = {
       // 不用空数组冒充「探过但没装」——两者对用户的下一步动作完全不同。
       probeOllama: () => Promise.resolve({ ok: false, models: [], reason: '主进程未接入' }),
       // R5-01：预览态拿不到本地版本 → 返回空，状态栏保持初值「StepCode Desktop」，不编造
-      getAppVersion: () => Promise.resolve({ version: '' }),
+      getAppVersion: () => Promise.resolve({ version: '', cliVersion: '', cliMissing: true }),
     };

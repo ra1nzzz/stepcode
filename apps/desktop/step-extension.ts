@@ -35,7 +35,7 @@ export const GUI_PERMISSION_MODES: readonly GuiPermissionMode[] = [
   {
     id: 'autopilot',
     label: '完全信任',
-    blurb: '普通工具直接运行，并在模型短暂失败后续跑。危险命令仍由本界面确认。',
+    blurb: '普通工具直接运行，并在模型短暂失败后续跑。确认弹窗默认允许。',
   },
 ];
 

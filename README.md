@@ -2,7 +2,7 @@
 
 公开仓库：https://github.com/ra1nzzz/stepcode
 
-当前版本：v0.16.2（`apps/desktop/package.json`。版本守卫核对这一行，改版本必须同步改这里）
+当前版本：v0.1.0（`apps/desktop/package.json`。版本守卫核对这一行，改版本必须同步改这里）
 
 本仓库不是 ISO 10303 的 STEPcode（https://github.com/stepcode/stepcode）。那个仓库不是 Agent CLI。
 

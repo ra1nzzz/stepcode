@@ -184,15 +184,15 @@ function installSessionActions(ACTIONS, ctx) {
   async function act_home_create_proj(el, id, e) {
  {
         ctx.openModal(`<div class="mh">${ctx.ic('folder', 18)}<b>创建项目</b></div>
-          <div class="mb">
-            <div class="mb-row"><label>项目名称</label><input id="newProjName" class="inp" placeholder="如：React 重构" style="width:100%"></div>
-            <div class="mb-row"><label>本地文件夹</label>
-              <div style="display:flex;gap:8px;align-items:center">
-                <input id="newProjPath" class="inp" placeholder="选择或输入本地文件夹路径" style="flex:1" readonly>
-                <button class="btn sm" data-action="pick-folder">浏览</button>
+          <div class="mb proj-form">
+            <label class="field"><span>项目名称</span><input id="newProjName" class="inp" placeholder="如：一日一事"></label>
+            <label class="field"><span>本地文件夹</span>
+              <div class="field-row">
+                <input id="newProjPath" class="inp" placeholder="选择或输入本地文件夹路径" readonly>
+                <button class="btn" data-action="pick-folder">浏览</button>
               </div>
-              <div class="faint" style="font-size:11px;margin-top:4px">绑定后可通过「打开项目目录」快速访问</div>
-            </div>
+              <span class="hint">绑定后可通过「打开项目目录」快速访问。不填也能创建，只是还不能在这个目录里工作。</span>
+            </label>
           </div>
           <div class="mf"><button class="btn ghost" data-action="modal-cancel">取消</button><button class="btn primary" data-action="do-create-proj-home">创建</button></div>`);}
   
@@ -834,6 +834,10 @@ function installSessionActions(ACTIONS, ctx) {
       ctx.toast('桌面壳安装失败：' + (err && err.message || err), 'err');
     }
   }
+  async function act_apply_all_updates(el) {
+    if (el.dataset.cli) await act_apply_cli_update();
+    if (el.dataset.desk) await act_install_desktop_update();
+  }
   async function act_check_updates(el, id, e) {
  {
         ctx.toast('正在快照，并检查桌面壳与 Agent 核…', 'ok');
@@ -842,12 +846,12 @@ function installSessionActions(ACTIONS, ctx) {
         const upd = (r && r.update) ? (r.update.note || (r.update.available ? `桌面壳 ${r.update.version}` : '桌面壳已是最新')) : '桌面壳未检查';
         const cli = (r && r.cli && r.cli.note) ? r.cli.note : 'Agent 核未检查';
         ctx.toast(`${snap}\n${upd}\n${cli}`, (r && ((r.update && r.update.available) || (r.cli && r.cli.updateAvailable))) ? 'ok' : 'warn');
+        const cliNeeds = !!(r && r.cli && (r.cli.updateAvailable || r.cli.missing));
+        const deskNeeds = !!(r && r.update && r.update.available);
         const buttons = [];
-        if (r && r.cli && (r.cli.updateAvailable || r.cli.missing)) {
-          buttons.push(`<button class="btn primary" data-action="apply-cli-update">${r.cli.missing ? '安装官方 CLI 作为核' : '更新 Agent 核'}</button>`);
-        }
-        if (r && r.update && r.update.available) {
-          buttons.push(`<button class="btn primary" data-action="install-desktop-update">安装桌面壳 ${ctx.esc(r.update.version || '')}</button>`);
+        if (cliNeeds || deskNeeds) {
+          const label = cliNeeds && deskNeeds ? '一键更新' : (cliNeeds ? (r.cli.missing ? '安装官方 CLI' : '更新 Agent 核') : '安装桌面壳');
+          buttons.push(`<button class="btn primary" data-action="apply-all-updates" data-cli="${cliNeeds ? '1' : ''}" data-desk="${deskNeeds ? '1' : ''}">${label}</button>`);
         }
         if (buttons.length && ctx.openModal) {
           ctx.openModal(`<div class="mh">${ctx.ic('zap', 18)}<b>更新</b></div><div class="mb"><div>${ctx.esc(upd)}</div><div style="margin-top:6px">${ctx.esc(cli)}</div></div><div class="mf"><button class="btn ghost" data-action="modal-cancel">取消</button>${buttons.join('')}</div>`);
@@ -1142,6 +1146,39 @@ function installSessionActions(ACTIONS, ctx) {
   
   }
 
+  async function act_unbind_dir(el) {
+    const clearMain = async (sid) => {
+      try { await ctx.bridge.setSessionCwd(sid, ''); } catch { /* 主进程不在时界面仍先解绑 */ }
+    };
+    const dropPath = async (project, oldPath) => {
+      project.path = '';
+      for (const sid of project.sessions || []) {
+        const s = ctx.state.sessions[sid];
+        if (s && s.cwd === oldPath) s.cwd = '';
+        await clearMain(sid);
+      }
+      if (ctx.state.workspaceDir === oldPath) ctx.saveWorkspaceDir('');
+    };
+    if (el.dataset.kind === 'project') {
+      const project = ctx.state.projects.find((x) => x.id === el.dataset.id);
+      if (!project || !project.path) return;
+      await dropPath(project, project.path);
+    } else {
+      const s = ctx.state.sessions[ctx.state.sel];
+      const project = s && s.pid && s.pid !== '__task__' ? ctx.state.projects.find((x) => x.id === s.pid) : null;
+      if (project && project.path) {
+        await dropPath(project, project.path);
+      } else {
+        const old = (s && s.cwd) || ctx.state.workspaceDir || '';
+        if (!old) return;
+        if (s) { s.cwd = ''; await clearMain(s.id); }
+        if (ctx.state.workspaceDir === old) ctx.saveWorkspaceDir('');
+      }
+    }
+    ctx.persist();
+    ctx.render();
+    ctx.toast('已停止在该目录工作，文件夹没有删除', 'ok');
+  }
   Object.assign(ACTIONS, {
     'nav': act_nav,
     'toggle-side': act_toggle_side,
@@ -1217,6 +1254,8 @@ function installSessionActions(ACTIONS, ctx) {
     'ollama-adopt': act_ollama_adopt,
 
     'todo': act_todo,
+    'apply-all-updates': act_apply_all_updates,
+    'unbind-dir': act_unbind_dir,
     'check-updates': act_check_updates,
     'apply-cli-update': act_apply_cli_update,
     'install-desktop-update': act_install_desktop_update,
